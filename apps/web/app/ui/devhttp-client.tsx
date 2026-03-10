@@ -2395,7 +2395,7 @@ export function DevHttpClient() {
                   ) : null}
                 </Button>
                 {isNotificationsOpen ? (
-                  <div className="absolute left-0 top-11 z-30 w-80 rounded-xl border border-border bg-popover p-2 shadow-xl">
+                  <div className="absolute left-0 top-11 z-50 w-80 rounded-xl border border-border bg-popover p-2 shadow-xl">
                     <div className="mb-2 flex items-center justify-between px-2">
                       <p className="text-sm font-semibold">Notificações</p>
                       <span className="text-xs text-muted-foreground">{notifications.length}</span>
@@ -2882,7 +2882,7 @@ export function DevHttpClient() {
                 {selectedProject ? (
                   <>
                     <p className="text-muted-foreground text-sm">Nenhuma request aberta</p>
-                    <Button variant="outline" size="sm" onClick={() => handleCreateNewRequest()}>
+                    <Button onClick={() => handleCreateNewRequest()}>
                       + Nova request
                     </Button>
                   </>
@@ -3267,26 +3267,6 @@ export function DevHttpClient() {
         onSubmit={() => void handleCreateEntity()}
       />
 
-      <RenameItemModal
-        open={renameModal !== null}
-        title={
-          renameModal?.type === "workspace"
-            ? "Renomear workspace"
-            : renameModal?.type === "project"
-              ? "Renomear projeto"
-              : renameModal?.type === "collection"
-                ? "Renomear coleção"
-                : "Renomear request"
-        }
-        value={renameName}
-        onChange={setRenameName}
-        onClose={() => {
-          setRenameModal(null);
-          setRenameName("");
-        }}
-        onSubmit={() => void handleRenameEntity()}
-      />
-
       <DeleteProjectModal
         open={deleteProjectTarget !== null}
         projectName={deleteProjectTarget?.name ?? ""}
@@ -3377,6 +3357,26 @@ export function DevHttpClient() {
         }
         onRemoveWorkspaceMember={(memberUserId) => void handleRemoveWorkspaceMember(memberUserId)}
         onRevokeWorkspaceInvite={(inviteId) => void handleRevokeWorkspaceInvite(inviteId)}
+      />
+
+      <RenameItemModal
+        open={renameModal !== null}
+        title={
+          renameModal?.type === "workspace"
+            ? "Renomear workspace"
+            : renameModal?.type === "project"
+              ? "Renomear projeto"
+              : renameModal?.type === "collection"
+                ? "Renomear coleção"
+                : "Renomear request"
+        }
+        value={renameName}
+        onChange={setRenameName}
+        onClose={() => {
+          setRenameModal(null);
+          setRenameName("");
+        }}
+        onSubmit={() => void handleRenameEntity()}
       />
 
       {collectionMenu && createPortal(

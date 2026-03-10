@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { AuthResponse, RegisterPayload, User, WorkspaceMembership } from "@devhttp/shared";
 
@@ -41,6 +41,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function detectDesktopRuntime() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const userAgent = window.navigator.userAgent || "";
+  const searchParams = new URLSearchParams(window.location.search);
+
+  return userAgent.includes("Electron/") || searchParams.get("client") === "desktop";
+}
+
 export function AuthScreen({
   mode,
 }: {
@@ -49,12 +60,17 @@ export function AuthScreen({
   const router = useRouter();
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDesktopRuntime, setIsDesktopRuntime] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [form, setForm] = useState<RegisterPayload>({
     name: "",
     email: "",
     password: "",
   });
+
+  useEffect(() => {
+    setIsDesktopRuntime(detectDesktopRuntime());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +97,8 @@ export function AuthScreen({
     };
   }, [router]);
 
-  async function handleSubmit() {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     try {
       setIsSubmitting(true);
       setFeedback("");
@@ -146,7 +163,8 @@ export function AuthScreen({
               : "Crie sua conta para começar com um workspace próprio chamado Geral."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent>
+          <form onSubmit={handleSubmit} className="grid gap-4">
           {mode === "register" ? (
             <div className="grid gap-1.5">
               <Label htmlFor="name">Nome</Label>
@@ -176,7 +194,7 @@ export function AuthScreen({
             />
           </div>
 
-          <Button onClick={handleSubmit} disabled={isSubmitting} size="lg" className="w-full mt-1">
+          <Button type="submit" disabled={isSubmitting} size="lg" className="w-full mt-1">
             {isSubmitting
               ? mode === "login"
                 ? "Entrando..."
@@ -186,15 +204,17 @@ export function AuthScreen({
                 : "Criar conta"}
           </Button>
 
-          <a
-            href={DESKTOP_DOWNLOAD_URL}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
-          >
-            <ExternalLink className="size-4" />
-            Baixar app para desktop
-          </a>
+          {!isDesktopRuntime ? (
+            <a
+              href={DESKTOP_DOWNLOAD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
+            >
+              <ExternalLink className="size-4" />
+              Baixar app para desktop
+            </a>
+          ) : null}
 
           <p className="text-sm text-center text-muted-foreground">
             {mode === "login" ? "Ainda não tem conta?" : "Já possui uma conta?"}{" "}
@@ -207,6 +227,7 @@ export function AuthScreen({
           </p>
 
           {feedback ? <p className="text-sm text-destructive">{feedback}</p> : null}
+          </form>
         </CardContent>
       </Card>
     </main>

@@ -1,15 +1,25 @@
 const { BrowserWindow, app, shell } = require("electron");
 
 function getTargetUrl() {
+  const desktopClientSuffix = "client=desktop";
+
   if (process.env.DEVHTTP_DESKTOP_URL) {
-    return process.env.DEVHTTP_DESKTOP_URL;
+    return appendDesktopClientMarker(process.env.DEVHTTP_DESKTOP_URL, desktopClientSuffix);
   }
 
   if (app.isPackaged) {
-    return "https://devhttp.marcelocorrea.com.br";
+    return `https://devhttp.marcelocorrea.com.br?${desktopClientSuffix}`;
   }
 
-  return "http://localhost:3000";
+  return `http://localhost:3000?${desktopClientSuffix}`;
+}
+
+function appendDesktopClientMarker(url, marker) {
+  const parsed = new URL(url);
+  if (!parsed.searchParams.has("client")) {
+    parsed.searchParams.set("client", "desktop");
+  }
+  return parsed.toString();
 }
 
 function createWindow() {
