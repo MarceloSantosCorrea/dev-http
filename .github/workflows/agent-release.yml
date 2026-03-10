@@ -1,0 +1,67 @@
+name: Agent Release
+
+on:
+  push:
+    tags:
+      - "agent-v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag da release do agent, por exemplo agent-v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: dist:agent:win
+            files: apps/agent/dist/*.exe
+          - os: macos-latest
+            script: dist:agent:mac
+            files: apps/agent/dist/*.dmg
+          - os: ubuntu-latest
+            script: dist:agent:linux
+            files: apps/agent/dist/*.AppImage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate agent shell
+        run: npm run build:agent
+
+      - name: Package agent app
+        run: npm run ${{ matrix.script }}
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          files: ${{ matrix.files }}

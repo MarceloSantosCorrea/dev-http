@@ -1,4 +1,12 @@
-const { BrowserWindow, app, shell } = require("electron");
+const { BrowserWindow, app, ipcMain, shell } = require("electron");
+const path = require("node:path");
+
+const { executeRequestLocally } = require("@devhttp/local-executor");
+
+if (process.platform === "linux") {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+}
 
 function getTargetUrl() {
   const desktopClientSuffix = "client=desktop";
@@ -33,6 +41,7 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -56,6 +65,13 @@ function createWindow() {
 
   void window.loadURL(targetUrl);
 }
+
+ipcMain.handle("devhttp:execute-local-request", async (_event, payload) => {
+  return executeRequestLocally({
+    ...payload,
+    source: "desktop-local",
+  });
+});
 
 app.whenReady().then(createWindow);
 

@@ -1,14 +1,18 @@
 {
-  "name": "@devhttp/desktop",
-  "version": "0.1.1",
+  "name": "@devhttp/agent",
+  "version": "0.1.0",
   "private": true,
-  "productName": "DevHttp",
-  "description": "Shell desktop do DevHttp baseado em Electron.",
+  "productName": "DevHttp Agent",
+  "description": "Agent local do DevHttp para execução de requests a localhost e rede privada.",
   "author": "Marcelo Correa",
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
-    "build": "node --check main.js && node --check preload.js",
+    "dev:server": "node server.js",
+    "build": "node --check main.js && node --check server.js",
+    "start": "electron .",
+    "start:server": "node server.js",
+    "lint": "node --check main.js && node --check server.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win nsis",
     "dist:mac": "electron-builder --mac dmg",
@@ -22,12 +26,12 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
-    "appId": "com.marcelosantoscorrea.devhttp",
-    "productName": "DevHttp",
+    "appId": "com.marcelosantoscorrea.devhttp.agent",
+    "productName": "DevHttp Agent",
     "asar": true,
     "files": [
       "main.js",
-      "preload.js",
+      "server.js",
       "package.json"
     ],
     "directories": {

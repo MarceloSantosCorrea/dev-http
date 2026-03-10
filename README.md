@@ -5,6 +5,7 @@ Monorepo do DevHttp com:
 - `apps/web`: cliente web em Next.js
 - `apps/api`: API NestJS
 - `apps/desktop`: shell Electron
+- `apps/agent`: agent local para localhost e rede privada
 - `packages/shared`: tipos compartilhados
 
 ## Rodando localmente
@@ -17,6 +18,7 @@ Monorepo do DevHttp com:
 6. `npm run dev:api`
 7. Em outro terminal: `npm run dev:web`
 8. Opcional: `npm run dev:desktop`
+9. Opcional para testar localhost via navegador: `npm run dev:agent`
 
 ## Desktop
 
@@ -32,6 +34,24 @@ Monorepo do DevHttp com:
 - Workflow de release:
   - `.github/workflows/desktop-release.yml`
   - dispara por tag `desktop-v*`
+  - também pode ser executada manualmente com `workflow_dispatch`
+- Distribuição via GitHub Releases
+
+## Agent
+
+- O agent usa Electron como app separado, com tray e execução em background
+- Em desenvolvimento:
+  - `npm run dev:agent`
+  - `npm run dev:agent --workspace @devhttp/agent` não é necessário; use o script raiz
+- Build local recomendado:
+  - `npm run dist:agent:linux`
+- Build de release para download:
+  - Windows via GitHub Actions em `windows-latest`
+  - macOS via GitHub Actions em `macos-latest`
+  - Linux via GitHub Actions em `ubuntu-latest`
+- Workflow de release:
+  - `.github/workflows/agent-release.yml`
+  - dispara por tag `agent-v*`
   - também pode ser executada manualmente com `workflow_dispatch`
 - Distribuição via GitHub Releases
 

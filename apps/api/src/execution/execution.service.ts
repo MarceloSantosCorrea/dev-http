@@ -78,6 +78,7 @@ export class ExecutionService {
       bodyText,
       bodyJson,
       resolvedUrl: url.toString(),
+      source: "server",
       console: {
         requestLine: `${input.method} ${url.toString()}`,
         sections: {

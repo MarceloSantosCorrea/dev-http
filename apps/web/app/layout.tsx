@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui/sonner";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -37,7 +38,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${heading.variable} ${mono.variable}`}>{children}</body>
+      <body className={`${heading.variable} ${mono.variable}`}>{children}<Toaster /></body>
     </html>
   );
 }

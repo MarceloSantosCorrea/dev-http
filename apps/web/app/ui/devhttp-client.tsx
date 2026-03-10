@@ -9,11 +9,13 @@ import type {
   BodyType,
   ConsoleValue,
   Environment,
+  ExecutedRequest,
   ExecutionConsole,
   ExecutionResponse,
   FormDataField,
   HttpMethod,
   KeyValue,
+  LocalExecutionRequest,
   Notification,
   PostmanImportResult,
   RequestDefinition,
@@ -32,7 +34,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { connectLocalAgent, executeLocalAgentRequest, LOCAL_AGENT_REQUIRED_MESSAGE } from "@/lib/local-agent";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
@@ -234,6 +238,54 @@ function updateSerializedRequestSnapshotName(snapshot: string, name: string) {
     });
   } catch {
     return snapshot;
+  }
+}
+
+function interpolateWithVariables(input: string, variables: Variable[]) {
+  const variableMap = new Map(
+    variables.filter((variable) => variable.enabled).map((variable) => [variable.key, variable.value]),
+  );
+  return input.replace(/\{\{([^}]+)\}\}/g, (_, key: string) => variableMap.get(key.trim()) ?? "");
+}
+
+function isPrivateHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (["localhost", "127.0.0.1", "::1"].includes(normalized) || normalized.endsWith(".local")) {
+    return true;
+  }
+
+  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4Match) {
+    return false;
+  }
+
+  const octets = ipv4Match.slice(1).map(Number);
+  if (octets.some((octet) => Number.isNaN(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+
+  return (
+    octets[0] === 10 ||
+    octets[0] === 127 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
+
+function shouldUseLocalExecution(
+  request: BootstrapRequest,
+  environment: Environment | null,
+) {
+  try {
+    const resolvedUrl = interpolateWithVariables(request.url, environment?.variables ?? []);
+    const hostname = new URL(resolvedUrl).hostname;
+    return isPrivateHostname(hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -441,6 +493,9 @@ export function DevHttpClient() {
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [collectionMenu, setCollectionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [hasDesktopBridge, setHasDesktopBridge] = useState(false);
+  const [hasLocalAgent, setHasLocalAgent] = useState(false);
+  const [localAgentToken, setLocalAgentToken] = useState("");
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<"headers" | "queryParams" | "body" | "script">(
     "headers",
@@ -490,12 +545,14 @@ export function DevHttpClient() {
     role: "viewer",
   });
   const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
+  const [notificationsAnchor, setNotificationsAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [newMenuAnchor, setNewMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const [isEditorNewMenuOpen, setIsEditorNewMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const notificationsRef = useRef<HTMLDivElement | null>(null);
+  const notificationsPanelRef = useRef<HTMLDivElement | null>(null);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
+  const newMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const editorNewMenuRef = useRef<HTMLDivElement | null>(null);
 
   const selectedProject = useMemo(
@@ -564,6 +621,35 @@ export function DevHttpClient() {
           (tab): tab is RequestEditorTab => tab.tabId === pendingCloseTabId && tab.type === "request",
         ) ?? null
       : null;
+
+  useEffect(() => {
+    setHasDesktopBridge(typeof window !== "undefined" && Boolean(window.devHttpDesktop?.executeLocalRequest));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function detectLocalAgent() {
+      if (hasDesktopBridge) {
+        if (!cancelled) {
+          setHasLocalAgent(false);
+          setLocalAgentToken("");
+        }
+        return;
+      }
+
+      const connection = await connectLocalAgent();
+      if (!cancelled) {
+        setHasLocalAgent(connection.available);
+        setLocalAgentToken(connection.token);
+      }
+    }
+
+    void detectLocalAgent();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasDesktopBridge]);
 
   useEffect(() => {
     function syncEditorLayout() {
@@ -642,7 +728,6 @@ export function DevHttpClient() {
         setOpenTabs(tabs);
         setActiveTabId(tabs[0]?.tabId ?? "");
         setIsSessionLoading(false);
-        setFeedback("");
 
         try {
           const prefs = await requestJson<UserPreferences>("/preferences", {
@@ -791,32 +876,30 @@ export function DevHttpClient() {
   }, [isUserMenuOpen]);
 
   useEffect(() => {
-    if (!isNotificationsOpen) {
-      return;
-    }
+    if (!notificationsAnchor) return;
 
     function handleClick(event: MouseEvent) {
       const target = event.target;
-      if (target instanceof Node && notificationsRef.current?.contains(target)) {
-        return;
-      }
-      setIsNotificationsOpen(false);
+      if (target instanceof Node && notificationsRef.current?.contains(target)) return;
+      if (target instanceof Node && notificationsPanelRef.current?.contains(target)) return;
+      setNotificationsAnchor(null);
     }
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [isNotificationsOpen]);
+  }, [notificationsAnchor]);
 
   useEffect(() => {
-    if (!isNewMenuOpen) return;
+    if (!newMenuAnchor) return;
     function handleClick(event: MouseEvent) {
       const target = event.target;
       if (target instanceof Node && newMenuRef.current?.contains(target)) return;
-      setIsNewMenuOpen(false);
+      if (target instanceof Node && newMenuPanelRef.current?.contains(target)) return;
+      setNewMenuAnchor(null);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [isNewMenuOpen]);
+  }, [newMenuAnchor]);
 
   useEffect(() => {
     if (!isEditorNewMenuOpen) return;
@@ -883,7 +966,7 @@ export function DevHttpClient() {
     const nextCollectionId =
       currentTab.draft.collectionId ?? selectedCollectionId ?? selectedProject.collections[0]?.id;
     if (!nextCollectionId) {
-      setFeedback("Crie uma coleção antes de salvar uma request.");
+      toast("Crie uma coleção antes de salvar uma request.");
       return null;
     }
 
@@ -944,7 +1027,7 @@ export function DevHttpClient() {
       setExpandedCollectionIds((current) =>
         current.includes(nextCollectionId) ? current : [...current, nextCollectionId],
       );
-      setFeedback("Request salva.");
+      toast.success("Request salva.");
       return {
         tabId: saved.id,
         draft: savedDraft,
@@ -955,13 +1038,72 @@ export function DevHttpClient() {
           ? { ...tab, isSaving: false }
           : tab,
       ));
-      setFeedback(error instanceof Error ? error.message : "Falha ao salvar request.");
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar request.");
       return null;
     }
   }
 
   async function handleSaveRequest() {
     await saveRequestTab(activeTabId);
+  }
+
+  function buildExecutionPayload(): ExecutedRequest {
+    return {
+      requestId: draftRequest.id || undefined,
+      method: draftRequest.method,
+      url: draftRequest.url,
+      environmentId: selectedEnvironmentId || undefined,
+      headers: draftRequest.headers.filter((item) => item.key || item.value),
+      queryParams: draftRequest.queryParams.filter((item) => item.key || item.value),
+      bodyType: draftRequest.bodyType,
+      body: draftRequest.body,
+      formData: draftRequest.formData.filter((item) => item.key || item.value || item.src),
+      postResponseScript: draftRequest.postResponseScript,
+    };
+  }
+
+  async function persistUpdatedEnvironmentVariables(updatedVariables: Variable[]) {
+    if (!auth || !selectedProject || !selectedEnvironmentId || !selectedEnvironment) {
+      return;
+    }
+
+    const nextEnvironment: Environment = {
+      ...selectedEnvironment,
+      variables: updatedVariables,
+    };
+
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            projects: current.projects.map((project) =>
+              project.id === selectedProject.id
+                ? {
+                    ...project,
+                    environments: project.environments.map((environment) =>
+                      environment.id === selectedEnvironment.id ? nextEnvironment : environment,
+                    ),
+                  }
+                : project,
+            ),
+          }
+        : current,
+    );
+    setSavedEnvironmentSnapshot(JSON.stringify(nextEnvironment));
+
+    try {
+      await requestJson<Environment>(`/projects/${selectedProject.id}/environments`, {
+        method: "POST",
+        headers: authHeaders(auth.token),
+        body: JSON.stringify(nextEnvironment),
+      });
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? `A execução local funcionou, mas falhou ao persistir variáveis: ${error.message}`
+          : "A execução local funcionou, mas falhou ao persistir variáveis.",
+      );
+    }
   }
 
   async function handleExecute() {
@@ -975,35 +1117,71 @@ export function DevHttpClient() {
           ? { ...tab, execution: null, isExecuting: true }
           : tab,
       ));
-      const result = await requestJson<ExecutionResponse>("/requests/execute", {
-        method: "POST",
-        headers: authHeaders(auth.token),
-        body: JSON.stringify({
-          requestId: draftRequest.id || undefined,
-          method: draftRequest.method,
-          url: draftRequest.url,
-          environmentId: selectedEnvironmentId || undefined,
-          headers: draftRequest.headers.filter((item) => item.key || item.value),
-          queryParams: draftRequest.queryParams.filter((item) => item.key || item.value),
-          bodyType: draftRequest.bodyType,
-          body: draftRequest.body,
-          formData: draftRequest.formData.filter((item) => item.key || item.value || item.src),
-          postResponseScript: draftRequest.postResponseScript,
-        }),
-      });
+      const payload = buildExecutionPayload();
+      const useLocalExecution = shouldUseLocalExecution(draftRequest, selectedEnvironment);
+      let result: ExecutionResponse;
+
+      if (useLocalExecution && hasDesktopBridge && window.devHttpDesktop?.executeLocalRequest) {
+        result = await window.devHttpDesktop.executeLocalRequest({
+          ...payload,
+          variables: selectedEnvironment?.variables ?? [],
+          source: "desktop-local",
+        } satisfies LocalExecutionRequest);
+      } else if (useLocalExecution) {
+        let agentToken = localAgentToken;
+
+        if (!hasLocalAgent || !agentToken) {
+          const connection = await connectLocalAgent();
+          setHasLocalAgent(connection.available);
+          setLocalAgentToken(connection.token);
+          agentToken = connection.token;
+        }
+
+        if (!agentToken) {
+          throw new Error(LOCAL_AGENT_REQUIRED_MESSAGE);
+        }
+
+        result = await executeLocalAgentRequest(agentToken, {
+          ...payload,
+          variables: selectedEnvironment?.variables ?? [],
+          source: "agent-local",
+        } satisfies LocalExecutionRequest);
+        setHasLocalAgent(true);
+      } else {
+        result = await requestJson<ExecutionResponse>("/requests/execute", {
+          method: "POST",
+          headers: authHeaders(auth.token),
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (useLocalExecution && result.scriptResult?.updatedVariables && selectedEnvironmentId) {
+        await persistUpdatedEnvironmentVariables(result.scriptResult.updatedVariables);
+      }
+
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
           ? { ...tab, execution: result, isExecuting: false }
           : tab,
       ));
-      setFeedback("Request executada.");
+      toast.success(
+        result.source === "desktop-local"
+          ? "Request executada localmente no desktop."
+          : result.source === "agent-local"
+            ? "Request executada localmente pelo DevHttp Agent."
+            : "Request executada.",
+      );
     } catch (error) {
+      if (error instanceof Error && error.message.includes("Sessão do DevHttp Agent")) {
+        setHasLocalAgent(false);
+        setLocalAgentToken("");
+      }
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
           ? { ...tab, execution: null, isExecuting: false }
           : tab,
       ));
-      setFeedback(error instanceof Error ? error.message : "Falha ao executar request.");
+      toast.error(error instanceof Error ? error.message : "Falha ao executar request.");
     }
   }
 
@@ -1029,9 +1207,9 @@ export function DevHttpClient() {
       link.click();
       URL.revokeObjectURL(url);
       setIsMenuOpen(false);
-      setFeedback("Exportação gerada.");
+      toast.success("Exportação gerada.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao exportar coleção.");
+      toast.error(error instanceof Error ? error.message : "Falha ao exportar coleção.");
     }
   }
 
@@ -1122,9 +1300,9 @@ export function DevHttpClient() {
       }
 
       setIsMenuOpen(false);
-      setFeedback(buildImportSummary(result));
+      toast(buildImportSummary(result));
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao importar arquivos do Postman.");
+      toast.error(error instanceof Error ? error.message : "Falha ao importar arquivos do Postman.");
     } finally {
       event.target.value = "";
     }
@@ -1227,9 +1405,9 @@ export function DevHttpClient() {
       );
       setSelectedEnvironmentId(saved.id);
       setSavedEnvironmentSnapshot(JSON.stringify(saved));
-      setFeedback("Ambiente salvo.");
+      toast.success("Ambiente salvo.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao salvar ambiente.");
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar ambiente.");
     } finally {
       setIsEnvironmentSaving(false);
     }
@@ -1336,7 +1514,7 @@ export function DevHttpClient() {
     }
 
     if (!workspaceInviteForm.email.trim()) {
-      setFeedback("Informe o email para convidar.");
+      toast("Informe o email para convidar.");
       return;
     }
 
@@ -1352,9 +1530,9 @@ export function DevHttpClient() {
       });
       setWorkspaceInviteForm({ email: "", role: "viewer" });
       await loadWorkspaceManagement();
-      setFeedback("Convite enviado.");
+      toast.success("Convite enviado.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao enviar convite.");
+      toast.error(error instanceof Error ? error.message : "Falha ao enviar convite.");
     } finally {
       setIsWorkspaceSaving(false);
     }
@@ -1373,9 +1551,9 @@ export function DevHttpClient() {
         body: JSON.stringify({ role }),
       });
       await loadWorkspaceManagement();
-      setFeedback("Permissão do membro atualizada.");
+      toast.success("Permissão do membro atualizada.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao atualizar membro.");
+      toast.error(error instanceof Error ? error.message : "Falha ao atualizar membro.");
     } finally {
       setIsWorkspaceSaving(false);
     }
@@ -1393,9 +1571,9 @@ export function DevHttpClient() {
         headers: authHeaders(auth.token),
       });
       await loadWorkspaceManagement();
-      setFeedback("Membro removido do workspace.");
+      toast.success("Membro removido do workspace.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao remover membro.");
+      toast.error(error instanceof Error ? error.message : "Falha ao remover membro.");
     } finally {
       setIsWorkspaceSaving(false);
     }
@@ -1414,9 +1592,9 @@ export function DevHttpClient() {
       });
       await loadWorkspaceManagement();
       await refreshNotifications();
-      setFeedback("Convite revogado.");
+      toast.success("Convite revogado.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao revogar convite.");
+      toast.error(error instanceof Error ? error.message : "Falha ao revogar convite.");
     } finally {
       setIsWorkspaceSaving(false);
     }
@@ -1449,9 +1627,9 @@ export function DevHttpClient() {
         );
       }
       await refreshNotifications();
-      setFeedback(action === "accept" ? "Convite aceito." : "Convite recusado.");
+      toast.success(action === "accept" ? "Convite aceito." : "Convite recusado.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao processar convite.");
+      toast.error(error instanceof Error ? error.message : "Falha ao processar convite.");
     }
   }
 
@@ -1479,7 +1657,6 @@ export function DevHttpClient() {
       setActiveTabId("");
       setIsUserMenuOpen(false);
       setIsSettingsOpen(false);
-      setFeedback("");
       router.replace("/login");
     }
   }
@@ -1491,7 +1668,7 @@ export function DevHttpClient() {
     }
 
     if (!file.type.startsWith("image/")) {
-      setFeedback("Selecione um arquivo de imagem para o avatar.");
+      toast("Selecione um arquivo de imagem para o avatar.");
       event.target.value = "";
       return;
     }
@@ -1552,7 +1729,7 @@ export function DevHttpClient() {
     }
 
     if (!profileForm.name.trim() || !profileForm.email.trim()) {
-      setFeedback("Nome e email são obrigatórios.");
+      toast("Nome e email são obrigatórios.");
       return;
     }
 
@@ -1592,9 +1769,9 @@ export function DevHttpClient() {
       setAvatarZoom(1);
       setAvatarOffsetX(0);
       setAvatarOffsetY(0);
-      setFeedback("Perfil atualizado.");
+      toast.success("Perfil atualizado.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao salvar perfil.");
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar perfil.");
     } finally {
       setIsProfileSaving(false);
     }
@@ -1616,9 +1793,9 @@ export function DevHttpClient() {
       setThemeMode(saved.themeMode);
       setSavedThemeMode(saved.themeMode);
       applyTheme(saved.themeMode);
-      setFeedback("Aparência atualizada.");
+      toast.success("Aparência atualizada.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao salvar aparência.");
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar aparência.");
     } finally {
       setIsAppearanceSaving(false);
     }
@@ -1630,12 +1807,12 @@ export function DevHttpClient() {
     }
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setFeedback("A confirmação da nova senha não confere.");
+      toast("A confirmação da nova senha não confere.");
       return;
     }
 
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
-      setFeedback("Preencha a senha atual e a nova senha.");
+      toast("Preencha a senha atual e a nova senha.");
       return;
     }
 
@@ -1650,9 +1827,9 @@ export function DevHttpClient() {
         }),
       });
       await handleLogout();
-      setFeedback("Senha alterada. Faça login novamente.");
+      toast("Senha alterada. Faça login novamente.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao alterar senha.");
+      toast.error(error instanceof Error ? error.message : "Falha ao alterar senha.");
     } finally {
       setIsPasswordSaving(false);
       setPasswordForm(emptyPasswordForm());
@@ -1666,7 +1843,7 @@ export function DevHttpClient() {
 
     const name = createName.trim();
     if (!name) {
-      setFeedback("Informe um nome para criar o item.");
+      toast("Informe um nome para criar o item.");
       return;
     }
 
@@ -1695,7 +1872,7 @@ export function DevHttpClient() {
         setSelectedEnvironmentId("");
         setOpenTabs([]);
         setActiveTabId("");
-        setFeedback("Workspace criado.");
+        toast.success("Workspace criado.");
       }
 
       if (createModalType === "project") {
@@ -1722,7 +1899,7 @@ export function DevHttpClient() {
         setSelectedProjectId(nextProject.id);
         setSelectedCollectionId("");
         setSelectedEnvironmentId("");
-        setFeedback("Projeto criado.");
+        toast.success("Projeto criado.");
       }
 
       if (createModalType === "collection" && selectedProject) {
@@ -1751,7 +1928,7 @@ export function DevHttpClient() {
         setExpandedCollectionIds((current) =>
           current.includes(created.id) ? current : [...current, created.id],
         );
-        setFeedback("Coleção criada.");
+        toast.success("Coleção criada.");
       }
 
       if (createModalType === "environment" && selectedProject) {
@@ -1778,10 +1955,10 @@ export function DevHttpClient() {
             : current,
         );
         selectEnvironment(created.id);
-        setFeedback("Ambiente criado.");
+        toast.success("Ambiente criado.");
       }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao criar item.");
+      toast.error(error instanceof Error ? error.message : "Falha ao criar item.");
     } finally {
       setCreateModalType(null);
       setCreateName("");
@@ -1794,7 +1971,7 @@ export function DevHttpClient() {
     }
 
     if (deleteProjectConfirmation.trim() !== deleteProjectTarget.name) {
-      setFeedback("Confirmação inválida para remover o projeto.");
+      toast("Confirmação inválida para remover o projeto.");
       return;
     }
 
@@ -1837,9 +2014,9 @@ export function DevHttpClient() {
       setPendingCloseTabId(null);
       setDeleteProjectTarget(null);
       setDeleteProjectConfirmation("");
-      setFeedback("Projeto removido.");
+      toast.success("Projeto removido.");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao remover projeto.");
+      toast.error(error instanceof Error ? error.message : "Falha ao remover projeto.");
     }
   }
 
@@ -1847,7 +2024,7 @@ export function DevHttpClient() {
     setCreateModalType(type);
     setCreateName("");
     setIsMenuOpen(false);
-    setIsNewMenuOpen(false);
+    setNewMenuAnchor(null);
     setIsEditorNewMenuOpen(false);
     setCollectionMenu(null);
   }
@@ -1879,7 +2056,7 @@ export function DevHttpClient() {
 
     const nextName = renameName.trim();
     if (!nextName) {
-      setFeedback("Informe um nome válido para renomear o item.");
+      toast("Informe um nome válido para renomear o item.");
       return;
     }
 
@@ -1926,7 +2103,7 @@ export function DevHttpClient() {
               }
             : current,
         );
-        setFeedback("Workspace renomeado.");
+        toast.success("Workspace renomeado.");
       }
 
       if (renameModal.type === "project") {
@@ -1955,7 +2132,7 @@ export function DevHttpClient() {
               }
             : current,
         );
-        setFeedback("Projeto renomeado.");
+        toast.success("Projeto renomeado.");
       }
 
       if (renameModal.type === "collection" && renameModal.projectId) {
@@ -1985,7 +2162,7 @@ export function DevHttpClient() {
               }
             : current,
         );
-        setFeedback("Coleção renomeada.");
+        toast.success("Coleção renomeada.");
       }
 
       if (renameModal.type === "request" && renameModal.projectId) {
@@ -2034,13 +2211,13 @@ export function DevHttpClient() {
             };
           }),
         );
-        setFeedback("Request renomeada.");
+        toast.success("Request renomeada.");
       }
 
       setRenameModal(null);
       setRenameName("");
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Falha ao renomear item.");
+      toast.error(error instanceof Error ? error.message : "Falha ao renomear item.");
     }
   }
 
@@ -2121,7 +2298,7 @@ export function DevHttpClient() {
     if (!selectedProject) return;
     const targetCollectionId = collectionId ?? selectedCollectionId ?? selectedProject.collections[0]?.id;
     if (!targetCollectionId) {
-      setFeedback("Crie uma coleção antes de adicionar uma request.");
+      toast("Crie uma coleção antes de adicionar uma request.");
       return;
     }
     const tabId = crypto.randomUUID();
@@ -2133,7 +2310,6 @@ export function DevHttpClient() {
       current.includes(targetCollectionId) ? current : [...current, targetCollectionId],
     );
     setCollectionMenu(null);
-    setFeedback("");
   }
 
   function selectProject(projectId: string) {
@@ -2150,7 +2326,6 @@ export function DevHttpClient() {
         : [...current, collectionId],
     );
     setCollectionMenu(null);
-    setFeedback("");
   }
 
   function selectRequest(request: BootstrapRequest) {
@@ -2167,7 +2342,6 @@ export function DevHttpClient() {
       );
     }
     setCollectionMenu(null);
-    setFeedback("");
   }
 
   function selectEnvironment(environmentId: string) {
@@ -2179,7 +2353,6 @@ export function DevHttpClient() {
     setActiveTabId(tabId);
     setSelectedEnvironmentId(environmentId);
     setCollectionMenu(null);
-    setFeedback("");
   }
 
   function activateTab(tabId: string) {
@@ -2323,7 +2496,6 @@ export function DevHttpClient() {
             <Button
               onClick={() => {
                 setAuth(null);
-                setFeedback("");
               }}
               size="lg"
               className="w-full"
@@ -2381,12 +2553,19 @@ export function DevHttpClient() {
                   </option>
                 ))}
               </select>
-              <div ref={notificationsRef} className="relative">
+              <div ref={notificationsRef}>
                 <Button
                   variant="outline"
                   size="icon"
                   className="h-9 w-9 shrink-0"
-                  onClick={() => setIsNotificationsOpen((current) => !current)}
+                  onClick={() => {
+                    if (notificationsAnchor) {
+                      setNotificationsAnchor(null);
+                    } else if (notificationsRef.current) {
+                      const rect = notificationsRef.current.getBoundingClientRect();
+                      setNotificationsAnchor({ x: rect.left, y: rect.bottom + 4 });
+                    }
+                  }}
                   title="Notificações"
                 >
                   <Bell className="size-4" />
@@ -2394,48 +2573,6 @@ export function DevHttpClient() {
                     <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
                   ) : null}
                 </Button>
-                {isNotificationsOpen ? (
-                  <div className="absolute left-0 top-11 z-50 w-80 rounded-xl border border-border bg-popover p-2 shadow-xl">
-                    <div className="mb-2 flex items-center justify-between px-2">
-                      <p className="text-sm font-semibold">Notificações</p>
-                      <span className="text-xs text-muted-foreground">{notifications.length}</span>
-                    </div>
-                    <div className="grid gap-2">
-                      {notifications.length === 0 ? (
-                        <p className="px-2 py-3 text-sm text-muted-foreground">
-                          Nenhuma notificação pendente.
-                        </p>
-                      ) : (
-                        notifications.map((notification) => (
-                          <div
-                            key={notification.id}
-                            className="rounded-lg border border-border/60 bg-card/70 p-3"
-                          >
-                            <p className="text-sm font-medium">{notification.title}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">{notification.body}</p>
-                            {notification.invite ? (
-                              <div className="mt-3 flex gap-2">
-                                <Button
-                                  size="sm"
-                                  onClick={() => void handleWorkspaceInviteAction(notification, "accept")}
-                                >
-                                  Aceitar
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void handleWorkspaceInviteAction(notification, "decline")}
-                                >
-                                  Recusar
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             </div>
 
@@ -2446,34 +2583,23 @@ export function DevHttpClient() {
                 placeholder="Pesquisar projeto"
                 className="h-8"
               />
-              <div ref={newMenuRef} className="relative">
+              <div ref={newMenuRef}>
                 <Button
                   variant="outline"
                   size="icon"
                   className="h-8 w-8 shrink-0"
-                  onClick={() => setIsNewMenuOpen((c) => !c)}
+                  onClick={() => {
+                    if (newMenuAnchor) {
+                      setNewMenuAnchor(null);
+                    } else if (newMenuRef.current) {
+                      const rect = newMenuRef.current.getBoundingClientRect();
+                      setNewMenuAnchor({ x: rect.left, y: rect.bottom + 4 });
+                    }
+                  }}
                   title="Novo"
                 >
                   +
                 </Button>
-                {isNewMenuOpen ? (
-                  <div className="absolute left-0 top-10 z-20 min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl">
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
-                      onClick={() => openCreateModal("workspace")}
-                    >
-                      Workspace
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
-                      onClick={() => openCreateModal("project")}
-                    >
-                      Projeto
-                    </button>
-                  </div>
-                ) : null}
               </div>
               <div className="relative">
                 <Button
@@ -3126,6 +3252,18 @@ export function DevHttpClient() {
                         </Badge>
                       ) : null}
                     </div>
+                    {execution ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Origem:{" "}
+                        <span className="font-medium text-foreground">
+                          {execution.source === "desktop-local"
+                            ? "Local desktop"
+                            : execution.source === "agent-local"
+                              ? "Agent local"
+                              : "Servidor"}
+                        </span>
+                      </p>
+                    ) : null}
 
                     <TabsContent value="response" className="mt-4 flex-1 min-h-0 overflow-y-auto">
                       {execution ? (
@@ -3243,7 +3381,6 @@ export function DevHttpClient() {
             </Card>
           )}
 
-          {feedback ? <p className="text-sm text-muted-foreground">{feedback}</p> : null}
         </section>
       </main>
 
@@ -3378,6 +3515,78 @@ export function DevHttpClient() {
         }}
         onSubmit={() => void handleRenameEntity()}
       />
+
+      {notificationsAnchor && createPortal(
+        <div
+          ref={notificationsPanelRef}
+          style={{ position: "fixed", left: notificationsAnchor.x, top: notificationsAnchor.y, zIndex: 9999 }}
+          className="w-80 rounded-xl border border-border bg-popover p-2 shadow-xl"
+        >
+          <div className="mb-2 flex items-center justify-between px-2">
+            <p className="text-sm font-semibold">Notificações</p>
+            <span className="text-xs text-muted-foreground">{notifications.length}</span>
+          </div>
+          <div className="grid gap-2">
+            {notifications.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-muted-foreground">
+                Nenhuma notificação pendente.
+              </p>
+            ) : (
+              notifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className="rounded-lg border border-border/60 bg-card/70 p-3"
+                >
+                  <p className="text-sm font-medium">{notification.title}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{notification.body}</p>
+                  {notification.invite ? (
+                    <div className="mt-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => void handleWorkspaceInviteAction(notification, "accept")}
+                      >
+                        Aceitar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleWorkspaceInviteAction(notification, "decline")}
+                      >
+                        Recusar
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {newMenuAnchor && createPortal(
+        <div
+          ref={newMenuPanelRef}
+          style={{ position: "fixed", left: newMenuAnchor.x, top: newMenuAnchor.y, zIndex: 9999 }}
+          className="min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl"
+        >
+          <button
+            type="button"
+            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            onClick={() => { setNewMenuAnchor(null); openCreateModal("workspace"); }}
+          >
+            Workspace
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            onClick={() => { setNewMenuAnchor(null); openCreateModal("project"); }}
+          >
+            Projeto
+          </button>
+        </div>,
+        document.body,
+      )}
 
       {collectionMenu && createPortal(
         <div

@@ -15,6 +15,7 @@ export type VariableScope = "workspace" | "project";
 export type BodyType = "json" | "text" | "form-urlencoded" | "form-data";
 export type FormDataFieldType = "text" | "file";
 export type ThemeMode = "light" | "dark" | "system";
+export type ExecutionSource = "server" | "desktop-local" | "agent-local";
 
 export interface User {
   id: string;
@@ -126,6 +127,11 @@ export interface ExecutedRequest {
   postResponseScript?: string;
 }
 
+export interface LocalExecutionRequest extends ExecutedRequest {
+  variables?: Variable[];
+  source?: ExecutionSource;
+}
+
 export interface ExecutionResponse {
   status: number;
   statusText: string;
@@ -134,6 +140,7 @@ export interface ExecutionResponse {
   bodyText: string;
   bodyJson?: unknown;
   resolvedUrl: string;
+  source: ExecutionSource;
   console: ExecutionConsole;
   scriptResult?: RequestScriptResult;
 }
