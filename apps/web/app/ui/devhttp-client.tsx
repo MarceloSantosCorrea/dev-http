@@ -3053,7 +3053,7 @@ export function DevHttpClient() {
                   : undefined
               }
             >
-              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden">
+              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden py-0">
                 <CardContent className="p-4 flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
                   <div className="flex items-center gap-2 flex-wrap shrink-0">
                     <Input
@@ -3222,7 +3222,7 @@ export function DevHttpClient() {
                 <div className="h-2 w-full rounded-full bg-border/70 hover:bg-primary/50 transition-colors" />
               </div>
 
-              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden">
+              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden py-0">
                 <CardContent className="p-4 flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
                   <Tabs
                     value={responseView}
@@ -4036,7 +4036,7 @@ function UserAvatar({
 
   if (src) {
     return (
-      <div className={cn("overflow-hidden rounded-full border border-border/60 bg-muted", sizeClass)}>
+      <div className={cn("shrink-0 overflow-hidden rounded-full border border-border/60 bg-muted", sizeClass)}>
         <img src={src} alt={user?.name ?? "Avatar do usuário"} className="h-full w-full object-cover" />
       </div>
     );
@@ -4045,7 +4045,7 @@ function UserAvatar({
   return (
     <div
       className={cn(
-        "grid place-items-center rounded-full border border-border/60 bg-muted text-xs font-semibold uppercase text-foreground",
+        "shrink-0 grid place-items-center rounded-full border border-border/60 bg-muted text-xs font-semibold uppercase text-foreground",
         sizeClass,
       )}
     >
@@ -4150,7 +4150,7 @@ function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4">
-      <Card className="w-full max-w-4xl overflow-hidden">
+      <Card className="w-full max-w-4xl overflow-hidden bg-background">
         <div className="grid max-h-[85vh] min-h-[32rem] md:grid-cols-[220px_minmax(0,1fr)]">
           <div className="border-b border-border/60 bg-muted/20 p-4 md:border-b-0 md:border-r">
             <div className="mb-6 flex items-center gap-3">
