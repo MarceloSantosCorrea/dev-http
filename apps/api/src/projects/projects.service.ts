@@ -5,6 +5,9 @@ import { CreateCollectionDto } from "./dto/create-collection.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { SaveEnvironmentDto } from "./dto/save-environment.dto";
 import { SaveRequestDto } from "./dto/save-request.dto";
+import { UpdateCollectionDto } from "./dto/update-collection.dto";
+import { UpdateProjectDto } from "./dto/update-project.dto";
+import { UpdateRequestDto } from "./dto/update-request.dto";
 
 type PostmanImportPayload = {
   collection?: Record<string, unknown>;
@@ -15,38 +18,56 @@ type PostmanImportPayload = {
 export class ProjectsService {
   constructor(@Inject(StoreService) private readonly store: StoreService) {}
 
-  async listProjects(workspaceId: string) {
-    return this.store.listProjects(workspaceId);
+  async listProjects(userId: string, workspaceId: string) {
+    return this.store.listProjects(userId, workspaceId);
   }
 
-  async getProject(projectId: string) {
-    return this.store.getProject(projectId);
+  async getProject(userId: string, projectId: string) {
+    return this.store.getProject(userId, projectId);
   }
 
-  async createProject(workspaceId: string, dto: CreateProjectDto) {
-    return this.store.createProject(workspaceId, {
+  async createProject(userId: string, workspaceId: string, dto: CreateProjectDto) {
+    return this.store.createProject(userId, workspaceId, {
       name: dto.name,
       description: dto.description ?? "",
     });
   }
 
-  async createCollection(projectId: string, dto: CreateCollectionDto) {
-    return this.store.createCollection(projectId, {
+  async updateProject(userId: string, projectId: string, dto: UpdateProjectDto) {
+    return this.store.updateProject(userId, projectId, {
+      name: dto.name,
+      description: dto.description,
+    });
+  }
+
+  async createCollection(userId: string, projectId: string, dto: CreateCollectionDto) {
+    return this.store.createCollection(userId, projectId, {
       name: dto.name,
       parentCollectionId: dto.parentCollectionId,
     });
   }
 
-  async removeProject(projectId: string) {
-    return this.store.removeProject(projectId);
+  async updateCollection(
+    userId: string,
+    projectId: string,
+    collectionId: string,
+    dto: UpdateCollectionDto,
+  ) {
+    return this.store.updateCollection(userId, projectId, collectionId, {
+      name: dto.name,
+    });
   }
 
-  async saveEnvironment(projectId: string, dto: SaveEnvironmentDto) {
-    return this.store.saveEnvironment(projectId, dto);
+  async removeProject(userId: string, projectId: string) {
+    return this.store.removeProject(userId, projectId);
   }
 
-  async saveRequest(projectId: string, dto: SaveRequestDto) {
-    return this.store.saveRequest(projectId, {
+  async saveEnvironment(userId: string, projectId: string, dto: SaveEnvironmentDto) {
+    return this.store.saveEnvironment(userId, projectId, dto);
+  }
+
+  async saveRequest(userId: string, projectId: string, dto: SaveRequestDto) {
+    return this.store.saveRequest(userId, projectId, {
       id: dto.id,
       name: dto.name,
       collectionId: dto.collectionId,
@@ -78,11 +99,23 @@ export class ProjectsService {
     });
   }
 
-  async importPostman(projectId: string, payload: PostmanImportPayload) {
-    return this.store.importPostman(projectId, payload);
+  async updateRequest(
+    userId: string,
+    projectId: string,
+    requestId: string,
+    dto: UpdateRequestDto,
+  ) {
+    return this.store.updateRequest(userId, projectId, requestId, {
+      name: dto.name,
+    });
   }
 
-  async exportProject(projectId: string) {
+  async importPostman(userId: string, projectId: string, payload: PostmanImportPayload) {
+    return this.store.importPostman(userId, projectId, payload);
+  }
+
+  async exportProject(userId: string, projectId: string) {
+    await this.store.getProject(userId, projectId);
     return this.store.exportProject(projectId);
   }
 }

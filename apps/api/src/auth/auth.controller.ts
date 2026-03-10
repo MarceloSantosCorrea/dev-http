@@ -11,6 +11,7 @@ import {
   type ResponseLike,
 } from "./auth-http";
 import { LoginDto } from "./dto/login.dto";
+import { RegisterDto } from "./dto/register.dto";
 import { AuthService } from "./auth.service";
 
 @Controller("auth")
@@ -33,6 +34,22 @@ export class AuthController {
     return {
       user: result.user,
       workspaceId: result.workspaceId,
+      workspaces: result.workspaces,
+    };
+  }
+
+  @Post("register")
+  async register(
+    @Body() body: RegisterDto,
+    @Res({ passthrough: true }) response: ResponseLike,
+  ) {
+    const result = await this.store.register(body);
+    const csrfToken = createCsrfToken();
+    response.setHeader("Set-Cookie", buildAuthCookies(result.token ?? "", csrfToken));
+    return {
+      user: result.user,
+      workspaceId: result.workspaceId,
+      workspaces: result.workspaces,
     };
   }
 

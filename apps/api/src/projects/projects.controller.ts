@@ -5,6 +5,7 @@ import {
   Get,
   Inject,
   Param,
+  Patch,
   Post,
   Req,
 } from "@nestjs/common";
@@ -15,6 +16,9 @@ import { CreateCollectionDto } from "./dto/create-collection.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { SaveEnvironmentDto } from "./dto/save-environment.dto";
 import { SaveRequestDto } from "./dto/save-request.dto";
+import { UpdateCollectionDto } from "./dto/update-collection.dto";
+import { UpdateProjectDto } from "./dto/update-project.dto";
+import { UpdateRequestDto } from "./dto/update-request.dto";
 import { ProjectsService } from "./projects.service";
 
 type PostmanImportPayload = {
@@ -36,8 +40,8 @@ export class ProjectsController {
     @Param("projectId") projectId: string,
     @Req() request: RequestLike,
   ) {
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.getProject(projectId);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.getProject(user.id, projectId);
   }
 
   @Post("workspaces/:workspaceId/projects")
@@ -47,8 +51,19 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.createProject(workspaceId, body);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.createProject(user.id, workspaceId, body);
+  }
+
+  @Patch("projects/:projectId")
+  async updateProject(
+    @Param("projectId") projectId: string,
+    @Body() body: UpdateProjectDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.updateProject(user.id, projectId, body);
   }
 
   @Post("projects/:projectId/environments")
@@ -58,8 +73,8 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.saveEnvironment(projectId, body);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.saveEnvironment(user.id, projectId, body);
   }
 
   @Post("projects/:projectId/collections")
@@ -69,8 +84,20 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.createCollection(projectId, body);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.createCollection(user.id, projectId, body);
+  }
+
+  @Patch("projects/:projectId/collections/:collectionId")
+  async updateCollection(
+    @Param("projectId") projectId: string,
+    @Param("collectionId") collectionId: string,
+    @Body() body: UpdateCollectionDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.updateCollection(user.id, projectId, collectionId, body);
   }
 
   @Delete("projects/:projectId")
@@ -79,8 +106,8 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.removeProject(projectId);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.removeProject(user.id, projectId);
   }
 
   @Post("projects/:projectId/requests")
@@ -90,8 +117,20 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.saveRequest(projectId, body);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.saveRequest(user.id, projectId, body);
+  }
+
+  @Patch("projects/:projectId/requests/:requestId")
+  async updateRequest(
+    @Param("projectId") projectId: string,
+    @Param("requestId") requestId: string,
+    @Body() body: UpdateRequestDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.updateRequest(user.id, projectId, requestId, body);
   }
 
   @Post("projects/:projectId/import/postman")
@@ -101,8 +140,8 @@ export class ProjectsController {
     @Req() request: RequestLike,
   ) {
     this.authService.requireCsrf(request);
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.importPostman(projectId, body);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.importPostman(user.id, projectId, body);
   }
 
   @Get("projects/:projectId/export/postman")
@@ -110,7 +149,7 @@ export class ProjectsController {
     @Param("projectId") projectId: string,
     @Req() request: RequestLike,
   ) {
-    await this.authService.requireUserFromRequest(request);
-    return this.projectsService.exportProject(projectId);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.exportProject(user.id, projectId);
   }
 }

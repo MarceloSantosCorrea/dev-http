@@ -1,4 +1,6 @@
 export type Role = "owner" | "admin" | "editor" | "viewer";
+export type WorkspaceInviteStatus = "pending" | "accepted" | "declined" | "revoked";
+export type NotificationType = "workspace_invite";
 
 export type HttpMethod =
   | "GET"
@@ -30,6 +32,11 @@ export interface Membership {
 export interface Workspace {
   id: string;
   name: string;
+}
+
+export interface WorkspaceMembership {
+  workspace: Workspace;
+  role: Role;
 }
 
 export interface Project {
@@ -142,15 +149,50 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterPayload {
+  name: string;
+  email: string;
+  password: string;
+}
+
 export interface AuthResponse {
   token?: string;
   user: User;
   workspaceId: string;
+  workspaces: WorkspaceMembership[];
 }
 
 export interface UserPreferences {
   sidebarCollapsed: boolean;
   themeMode: ThemeMode;
+}
+
+export interface WorkspaceMember {
+  user: User;
+  role: Role;
+  createdAt: string;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  email: string;
+  role: Role;
+  status: WorkspaceInviteStatus;
+  invitedBy: User;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  readAt?: string;
+  createdAt: string;
+  invite?: WorkspaceInvite;
 }
 
 export interface PostmanImportResult {

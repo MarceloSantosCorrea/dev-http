@@ -5,6 +5,7 @@ import { AuthService } from "./auth/auth.service";
 import { ExecutionController } from "./execution/execution.controller";
 import { ExecutionService } from "./execution/execution.service";
 import { HealthController } from "./health.controller";
+import { NotificationsController } from "./notifications.controller";
 import { PreferencesController } from "./preferences/preferences.controller";
 import { PrismaService } from "./prisma/prisma.service";
 import { ProjectsController } from "./projects/projects.controller";
@@ -22,6 +23,7 @@ import { WorkspacesController } from "./workspaces/workspaces.controller";
     ExecutionController,
     PreferencesController,
     UsersController,
+    NotificationsController,
   ],
   providers: [PrismaService, StoreService, AuthService, ProjectsService, ExecutionService],
 })

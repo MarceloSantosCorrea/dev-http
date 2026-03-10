@@ -14,6 +14,17 @@ enum MembershipRole {
   viewer
 }
 
+enum WorkspaceInviteStatus {
+  pending
+  accepted
+  declined
+  revoked
+}
+
+enum NotificationType {
+  workspace_invite
+}
+
 enum VariableScope {
   workspace
   project
@@ -30,25 +41,28 @@ enum HttpMethod {
 }
 
 model User {
-  id           String          @id @db.VarChar(191)
-  name         String          @db.VarChar(191)
-  email        String          @unique @db.VarChar(191)
-  avatarUrl    String?         @db.LongText
-  passwordHash String          @db.VarChar(255)
-  memberships  Membership[]
-  sessions     SessionToken[]
-  preference   UserPreference?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id                  String            @id @db.VarChar(191)
+  name                String            @db.VarChar(191)
+  email               String            @unique @db.VarChar(191)
+  avatarUrl           String?           @db.LongText
+  passwordHash        String            @db.VarChar(255)
+  memberships         Membership[]
+  sessions            SessionToken[]
+  preference          UserPreference?
+  sentWorkspaceInvites WorkspaceInvite[] @relation("WorkspaceInviteSender")
+  notifications       Notification[]
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 }
 
 model Workspace {
-  id          String       @id @db.VarChar(191)
-  name        String       @db.VarChar(191)
+  id          String            @id @db.VarChar(191)
+  name        String            @db.VarChar(191)
   memberships Membership[]
+  invites     WorkspaceInvite[]
   projects    Project[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 }
 
 model Membership {
@@ -146,4 +160,44 @@ model UserPreference {
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+}
+
+model WorkspaceInvite {
+  id              String                @id @default(uuid()) @db.VarChar(191)
+  workspaceId     String
+  email           String                @db.VarChar(191)
+  role            MembershipRole
+  status          WorkspaceInviteStatus @default(pending)
+  invitedByUserId String
+  acceptedAt      DateTime?
+  declinedAt      DateTime?
+  revokedAt       DateTime?
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy       User                  @relation("WorkspaceInviteSender", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+  notifications   Notification[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([invitedByUserId])
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.VarChar(191)
+  userId    String
+  inviteId  String?          @db.VarChar(191)
+  type      NotificationType
+  title     String           @db.VarChar(191)
+  body      String           @db.Text
+  readAt    DateTime?
+  actedAt   DateTime?
+  metadata  Json
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invite    WorkspaceInvite? @relation(fields: [inviteId], references: [id], onDelete: SetNull)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([userId, readAt])
+  @@index([inviteId])
 }

@@ -13,12 +13,16 @@ import type {
   FormDataField,
   KeyValue,
   Membership,
+  Notification,
   PostmanImportResult,
   Project,
   RequestDefinition,
   User,
   Variable,
   Workspace,
+  WorkspaceInvite,
+  WorkspaceMember,
+  WorkspaceMembership,
 } from "@devhttp/shared";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -109,6 +113,24 @@ type ProjectWithRelations = Prisma.ProjectGetPayload<{
   };
 }>;
 
+type InviteWithRelations = Prisma.WorkspaceInviteGetPayload<{
+  include: {
+    workspace: true;
+    invitedBy: true;
+  };
+}>;
+
+type NotificationWithRelations = Prisma.NotificationGetPayload<{
+  include: {
+    invite: {
+      include: {
+        workspace: true;
+        invitedBy: true;
+      };
+    };
+  };
+}>;
+
 @Injectable()
 export class StoreService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -159,6 +181,78 @@ export class StoreService {
       workspace: this.toWorkspace(membership.workspace),
       role: membership.role as Membership["role"],
     }));
+  }
+
+  async register(input: { name?: string; email: string; password: string }): Promise<AuthResponse> {
+    const email = input.email.trim().toLowerCase();
+    const name = input.name?.trim() || email.split("@")[0] || "Novo usuário";
+    const password = input.password.trim();
+
+    if (!email || !password) {
+      throw new BadRequestException("Nome, email e senha são obrigatórios.");
+    }
+
+    const existing = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new BadRequestException("Já existe uma conta com este email.");
+    }
+
+    const passwordHash = await hash(password, 10);
+    const userId = randomUUID();
+    const workspaceId = randomUUID();
+
+    const user = await this.prisma.user.create({
+      data: {
+        id: userId,
+        name,
+        email,
+        passwordHash,
+      },
+    });
+
+    await this.prisma.userPreference.create({
+      data: {
+        userId,
+        sidebarCollapsed: false,
+        themeMode: "system",
+      },
+    });
+
+    await this.prisma.workspace.create({
+      data: {
+        id: workspaceId,
+        name: "Geral",
+      },
+    });
+
+    await this.prisma.membership.create({
+      data: {
+        userId,
+        workspaceId,
+        role: "owner",
+      },
+    });
+
+    await this.createNotificationsForPendingInvites(user);
+
+    const token = randomBytes(32).toString("hex");
+    await this.prisma.sessionToken.create({
+      data: {
+        id: randomUUID(),
+        userId,
+        tokenHash: this.hashToken(token),
+      },
+    });
+
+    return {
+      token,
+      user: this.sanitizeUser(user),
+      workspaceId,
+      workspaces: await this.listWorkspacesForUser(userId),
+    };
   }
 
   async getBootstrap(userId: string, workspaceId: string) {
@@ -231,6 +325,7 @@ export class StoreService {
       token,
       user: this.sanitizeUser(user),
       workspaceId,
+      workspaces: await this.listWorkspacesForUser(user.id),
     };
   }
 
@@ -300,6 +395,8 @@ export class StoreService {
       },
     });
 
+    await this.createNotificationsForPendingInvites(updated);
+
     return this.sanitizeUser(updated);
   }
 
@@ -329,7 +426,401 @@ export class StoreService {
     return { passwordChanged: true };
   }
 
-  async listProjects(workspaceId: string) {
+  async listNotifications(userId: string): Promise<Notification[]> {
+    const notifications = await this.prisma.notification.findMany({
+      where: { userId },
+      include: {
+        invite: {
+          include: {
+            workspace: true,
+            invitedBy: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return notifications.map((notification) => this.toNotification(notification));
+  }
+
+  async markNotificationAsRead(userId: string, notificationId: string) {
+    const notification = await this.prisma.notification.findUnique({
+      where: { id: notificationId },
+      select: { id: true, userId: true, readAt: true },
+    });
+    if (!notification || notification.userId !== userId) {
+      throw new NotFoundException("Notificação não encontrada.");
+    }
+
+    await this.prisma.notification.update({
+      where: { id: notificationId },
+      data: {
+        readAt: notification.readAt ?? new Date(),
+      },
+    });
+
+    return { notificationId, read: true };
+  }
+
+  async listWorkspaceMembers(userId: string, workspaceId: string): Promise<WorkspaceMember[]> {
+    await this.requireWorkspaceRole(userId, workspaceId, ["owner", "admin", "editor", "viewer"]);
+
+    const memberships = await this.prisma.membership.findMany({
+      where: { workspaceId },
+      include: { user: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return memberships.map((membership) => ({
+      user: this.sanitizeUser(membership.user),
+      role: membership.role as WorkspaceMember["role"],
+      createdAt: membership.createdAt.toISOString(),
+    }));
+  }
+
+  async listWorkspaceInvites(userId: string, workspaceId: string): Promise<WorkspaceInvite[]> {
+    await this.requireWorkspaceRole(userId, workspaceId, ["owner", "admin"]);
+
+    const invites = await this.prisma.workspaceInvite.findMany({
+      where: {
+        workspaceId,
+        status: "pending",
+      },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return invites.map((invite) => this.toWorkspaceInvite(invite));
+  }
+
+  async createWorkspaceInvite(
+    actorUserId: string,
+    workspaceId: string,
+    input: { email: string; role: "admin" | "editor" | "viewer" },
+  ) {
+    await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
+
+    const email = input.email.trim().toLowerCase();
+    if (!email) {
+      throw new BadRequestException("Email é obrigatório para convite.");
+    }
+
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, name: true },
+    });
+    if (!workspace) {
+      throw new NotFoundException("Workspace não encontrado.");
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existingUser) {
+      const existingMembership = await this.prisma.membership.findUnique({
+        where: {
+          userId_workspaceId: {
+            userId: existingUser.id,
+            workspaceId,
+          },
+        },
+      });
+      if (existingMembership) {
+        throw new BadRequestException("Esse usuário já faz parte do workspace.");
+      }
+    }
+
+    const existingInvite = await this.prisma.workspaceInvite.findFirst({
+      where: {
+        workspaceId,
+        email,
+        status: "pending",
+      },
+      select: { id: true },
+    });
+    if (existingInvite) {
+      throw new BadRequestException("Já existe um convite pendente para esse email neste workspace.");
+    }
+
+    const invite = await this.prisma.workspaceInvite.create({
+      data: {
+        id: randomUUID(),
+        workspaceId,
+        email,
+        role: input.role,
+        status: "pending",
+        invitedByUserId: actorUserId,
+      },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+    });
+
+    if (existingUser) {
+      await this.ensureInviteNotification(existingUser.id, invite);
+    }
+
+    return this.toWorkspaceInvite(invite);
+  }
+
+  async revokeWorkspaceInvite(actorUserId: string, workspaceId: string, inviteId: string) {
+    await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
+
+    const invite = await this.prisma.workspaceInvite.findUnique({
+      where: { id: inviteId },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+    });
+    if (!invite || invite.workspaceId !== workspaceId) {
+      throw new NotFoundException("Convite não encontrado.");
+    }
+
+    const updated = await this.prisma.workspaceInvite.update({
+      where: { id: inviteId },
+      data: {
+        status: "revoked",
+        revokedAt: new Date(),
+      },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+    });
+
+    await this.prisma.notification.updateMany({
+      where: {
+        inviteId,
+      },
+      data: {
+        actedAt: new Date(),
+      },
+    });
+
+    return this.toWorkspaceInvite(updated);
+  }
+
+  async acceptWorkspaceInvite(userId: string, inviteId: string) {
+    const user = await this.findUserById(userId);
+    const invite = await this.prisma.workspaceInvite.findUnique({
+      where: { id: inviteId },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+    });
+    if (!invite || invite.status !== "pending") {
+      throw new NotFoundException("Convite não encontrado.");
+    }
+    if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
+      throw new UnauthorizedException("Este convite não pertence ao usuário autenticado.");
+    }
+
+    const existingMembership = await this.prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          userId,
+          workspaceId: invite.workspaceId,
+        },
+      },
+    });
+    if (!existingMembership) {
+      await this.prisma.membership.create({
+        data: {
+          userId,
+          workspaceId: invite.workspaceId,
+          role: invite.role,
+        },
+      });
+    }
+
+    const actedAt = new Date();
+    await this.prisma.workspaceInvite.update({
+      where: { id: inviteId },
+      data: {
+        status: "accepted",
+        acceptedAt: actedAt,
+      },
+    });
+    await this.prisma.notification.updateMany({
+      where: {
+        inviteId,
+        userId,
+      },
+      data: {
+        readAt: actedAt,
+        actedAt,
+      },
+    });
+
+    return {
+      inviteId,
+      accepted: true,
+      workspaceId: invite.workspaceId,
+      workspaces: await this.listWorkspacesForUser(userId),
+    };
+  }
+
+  async declineWorkspaceInvite(userId: string, inviteId: string) {
+    const user = await this.findUserById(userId);
+    const invite = await this.prisma.workspaceInvite.findUnique({
+      where: { id: inviteId },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+      },
+    });
+    if (!invite || invite.status !== "pending") {
+      throw new NotFoundException("Convite não encontrado.");
+    }
+    if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
+      throw new UnauthorizedException("Este convite não pertence ao usuário autenticado.");
+    }
+
+    const actedAt = new Date();
+    await this.prisma.workspaceInvite.update({
+      where: { id: inviteId },
+      data: {
+        status: "declined",
+        declinedAt: actedAt,
+      },
+    });
+    await this.prisma.notification.updateMany({
+      where: {
+        inviteId,
+        userId,
+      },
+      data: {
+        readAt: actedAt,
+        actedAt,
+      },
+    });
+
+    return {
+      inviteId,
+      declined: true,
+    };
+  }
+
+  async updateWorkspaceMemberRole(
+    actorUserId: string,
+    workspaceId: string,
+    memberUserId: string,
+    role: WorkspaceMember["role"],
+  ) {
+    const actorMembership = await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
+    const targetMembership = await this.prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          userId: memberUserId,
+          workspaceId,
+        },
+      },
+      include: {
+        user: true,
+      },
+    });
+    if (!targetMembership) {
+      throw new NotFoundException("Membro não encontrado.");
+    }
+
+    if (actorMembership.role !== "owner" && role === "owner") {
+      throw new UnauthorizedException("Apenas owner pode promover outro membro a owner.");
+    }
+
+    if (targetMembership.role === "owner" && actorMembership.role !== "owner") {
+      throw new UnauthorizedException("Apenas owner pode alterar o papel de outro owner.");
+    }
+
+    if (targetMembership.role === "owner" && role !== "owner") {
+      const ownerCount = await this.prisma.membership.count({
+        where: {
+          workspaceId,
+          role: "owner",
+        },
+      });
+      if (ownerCount <= 1) {
+        throw new BadRequestException("O workspace precisa manter pelo menos um owner.");
+      }
+    }
+
+    const updated = await this.prisma.membership.update({
+      where: {
+        userId_workspaceId: {
+          userId: memberUserId,
+          workspaceId,
+        },
+      },
+      data: {
+        role,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return {
+      user: this.sanitizeUser(updated.user),
+      role: updated.role as WorkspaceMember["role"],
+      createdAt: updated.createdAt.toISOString(),
+    };
+  }
+
+  async removeWorkspaceMember(actorUserId: string, workspaceId: string, memberUserId: string) {
+    const actorMembership = await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
+    const targetMembership = await this.prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          userId: memberUserId,
+          workspaceId,
+        },
+      },
+    });
+    if (!targetMembership) {
+      throw new NotFoundException("Membro não encontrado.");
+    }
+
+    if (targetMembership.role === "owner") {
+      if (actorMembership.role !== "owner") {
+        throw new UnauthorizedException("Apenas owner pode remover outro owner.");
+      }
+
+      const ownerCount = await this.prisma.membership.count({
+        where: {
+          workspaceId,
+          role: "owner",
+        },
+      });
+      if (ownerCount <= 1) {
+        throw new BadRequestException("O workspace precisa manter pelo menos um owner.");
+      }
+    }
+
+    await this.prisma.membership.delete({
+      where: {
+        userId_workspaceId: {
+          userId: memberUserId,
+          workspaceId,
+        },
+      },
+    });
+
+    return {
+      userId: memberUserId,
+      removed: true,
+    };
+  }
+
+  async listProjects(userId: string, workspaceId: string) {
+    await this.requireWorkspaceRole(userId, workspaceId, ["owner", "admin", "editor", "viewer"]);
+
     const projects = await this.prisma.project.findMany({
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
@@ -338,7 +829,39 @@ export class StoreService {
     return projects.map((project) => this.toProject(project));
   }
 
-  async getProject(projectId: string) {
+  async updateWorkspace(userId: string, workspaceId: string, input: { name?: string }) {
+    await this.requireWorkspaceRole(userId, workspaceId, ["owner", "admin"]);
+
+    const nextName = input.name?.trim();
+    if (!nextName) {
+      throw new BadRequestException("Nome do workspace é obrigatório.");
+    }
+
+    const workspace = await this.prisma.workspace.update({
+      where: { id: workspaceId },
+      data: {
+        name: nextName,
+      },
+    });
+
+    return this.toWorkspace(workspace);
+  }
+
+  async createWorkspace(userId: string, input: { name: string }): Promise<WorkspaceMembership> {
+    const workspaceId = randomUUID();
+    const workspace = await this.prisma.workspace.create({
+      data: { id: workspaceId, name: input.name },
+    });
+    await this.prisma.membership.create({
+      data: { userId, workspaceId, role: "owner" },
+    });
+    return { workspace: this.toWorkspace(workspace), role: "owner" };
+  }
+
+  async getProject(userId: string, projectId: string) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor", "viewer"]);
+
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       include: {
@@ -354,7 +877,9 @@ export class StoreService {
     return this.toProjectBundle(project);
   }
 
-  async createProject(workspaceId: string, input: { name: string; description: string }) {
+  async createProject(userId: string, workspaceId: string, input: { name: string; description: string }) {
+    await this.requireWorkspaceRole(userId, workspaceId, ["owner", "admin"]);
+
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { id: true },
@@ -375,7 +900,41 @@ export class StoreService {
     return this.toProject(project);
   }
 
-  async removeProject(projectId: string) {
+  async updateProject(
+    userId: string,
+    projectId: string,
+    input: { name?: string; description?: string },
+  ) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    const data: { name?: string; description?: string } = {};
+    if (input.name !== undefined) {
+      const nextName = input.name.trim();
+      if (!nextName) {
+        throw new BadRequestException("Nome do projeto é obrigatório.");
+      }
+      data.name = nextName;
+    }
+    if (input.description !== undefined) {
+      data.description = input.description.trim();
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException("Nenhuma alteração foi informada para o projeto.");
+    }
+
+    const project = await this.prisma.project.update({
+      where: { id: projectId },
+      data,
+    });
+
+    return this.toProject(project);
+  }
+
+  async removeProject(userId: string, projectId: string) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin"]);
+
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       select: { id: true },
@@ -395,10 +954,12 @@ export class StoreService {
   }
 
   async createCollection(
+    userId: string,
     projectId: string,
     input: { name: string; parentCollectionId?: string },
   ) {
-    await this.ensureProjectExists(projectId);
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
 
     if (input.parentCollectionId) {
       const parent = await this.prisma.collection.findUnique({
@@ -422,11 +983,45 @@ export class StoreService {
     return this.toCollection(collection);
   }
 
+  async updateCollection(
+    userId: string,
+    projectId: string,
+    collectionId: string,
+    input: { name?: string },
+  ) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    const nextName = input.name?.trim();
+    if (!nextName) {
+      throw new BadRequestException("Nome da coleção é obrigatório.");
+    }
+
+    const collection = await this.prisma.collection.findUnique({
+      where: { id: collectionId },
+      select: { id: true, projectId: true },
+    });
+    if (!collection || collection.projectId !== projectId) {
+      throw new NotFoundException("Coleção não encontrada.");
+    }
+
+    const updated = await this.prisma.collection.update({
+      where: { id: collectionId },
+      data: {
+        name: nextName,
+      },
+    });
+
+    return this.toCollection(updated);
+  }
+
   async saveEnvironment(
+    userId: string,
     projectId: string,
     payload: { id?: string; name: string; scope: "workspace" | "project"; variables: Variable[] },
   ) {
-    await this.ensureProjectExists(projectId);
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
 
     if (payload.id) {
       const existing = await this.prisma.environment.findUnique({
@@ -462,10 +1057,12 @@ export class StoreService {
   }
 
   async saveRequest(
+    userId: string,
     projectId: string,
     payload: Omit<RequestDefinition, "projectId" | "updatedAt" | "id"> & { id?: string },
   ) {
-    await this.ensureProjectExists(projectId);
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
 
     if (payload.collectionId) {
       const collection = await this.prisma.collection.findUnique({
@@ -525,6 +1122,38 @@ export class StoreService {
     return this.toRequest(request);
   }
 
+  async updateRequest(
+    userId: string,
+    projectId: string,
+    requestId: string,
+    input: { name?: string },
+  ) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    const nextName = input.name?.trim();
+    if (!nextName) {
+      throw new BadRequestException("Nome da request é obrigatório.");
+    }
+
+    const existing = await this.prisma.request.findUnique({
+      where: { id: requestId },
+      select: { id: true, projectId: true },
+    });
+    if (!existing || existing.projectId !== projectId) {
+      throw new NotFoundException("Request não encontrada.");
+    }
+
+    const updated = await this.prisma.request.update({
+      where: { id: requestId },
+      data: {
+        name: nextName,
+      },
+    });
+
+    return this.toRequest(updated);
+  }
+
   async getEnvironment(environmentId?: string) {
     if (!environmentId) {
       return null;
@@ -552,9 +1181,13 @@ export class StoreService {
   }
 
   async importPostman(
+    userId: string,
     projectId: string,
     input: { collection?: PostmanCollection; environment?: PostmanEnvironment },
   ): Promise<PostmanImportResult> {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
     const imported: RequestDefinition[] = [];
     const warnings = new Set<string>();
     const detectedVariables = new Set<string>();
@@ -642,7 +1275,7 @@ export class StoreService {
   }
 
   async exportProject(projectId: string) {
-    const project = await this.getProject(projectId);
+    const project = await this.getProjectBundleForExport(projectId);
     const rootCollections = project.collections.filter((collection) => !collection.parentCollectionId);
     const rootRequests = project.requests.filter((request) => !request.collectionId);
 
@@ -720,7 +1353,7 @@ export class StoreService {
       );
 
       if (parsed) {
-        requests.push(await this.saveRequest(projectId, parsed));
+        requests.push(await this.saveRequestSystem(projectId, parsed));
       }
     }
 
@@ -777,7 +1410,7 @@ export class StoreService {
       };
     }
 
-    const created = await this.saveEnvironment(projectId, {
+    const created = await this.saveEnvironmentSystem(projectId, {
       name: environmentName,
       scope: "project",
       variables,
@@ -1184,9 +1817,16 @@ export class StoreService {
       };
     }
 
-    const collection = await this.createCollection(projectId, { name, parentCollectionId });
+    const collection = await this.prisma.collection.create({
+      data: {
+        id: randomUUID(),
+        projectId,
+        name,
+        parentCollectionId,
+      },
+    });
     return {
-      collection,
+      collection: this.toCollection(collection),
       created: true,
       id: collection.id,
     };
@@ -1227,11 +1867,158 @@ export class StoreService {
   private async ensureProjectExists(projectId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true },
+      select: { id: true, workspaceId: true },
     });
     if (!project) {
       throw new NotFoundException("Projeto não encontrado.");
     }
+    return project;
+  }
+
+  private async getProjectWorkspace(projectId: string) {
+    return this.ensureProjectExists(projectId);
+  }
+
+  private async getProjectBundleForExport(projectId: string) {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        collections: { orderBy: { createdAt: "desc" } },
+        environments: { orderBy: { createdAt: "desc" } },
+        requests: { orderBy: { createdAt: "desc" } },
+      },
+    });
+    if (!project) {
+      throw new NotFoundException("Projeto não encontrado.");
+    }
+
+    return this.toProjectBundle(project);
+  }
+
+  private async requireWorkspaceRole(
+    userId: string,
+    workspaceId: string,
+    allowedRoles: Membership["role"][],
+  ) {
+    const membership = await this.prisma.membership.findUnique({
+      where: {
+        userId_workspaceId: {
+          userId,
+          workspaceId,
+        },
+      },
+    });
+    if (!membership) {
+      throw new UnauthorizedException("Usuário sem acesso a este workspace.");
+    }
+    if (!allowedRoles.includes(membership.role as Membership["role"])) {
+      throw new UnauthorizedException("Você não possui permissão para esta ação.");
+    }
+
+    return membership;
+  }
+
+  private async saveEnvironmentSystem(
+    projectId: string,
+    payload: { id?: string; name: string; scope: "workspace" | "project"; variables: Variable[] },
+  ) {
+    const project = await this.ensureProjectExists(projectId);
+
+    if (payload.id) {
+      const existing = await this.prisma.environment.findUnique({
+        where: { id: payload.id },
+        select: { id: true, projectId: true },
+      });
+      if (!existing || existing.projectId !== project.id) {
+        throw new NotFoundException("Ambiente não encontrado.");
+      }
+
+      const environment = await this.prisma.environment.update({
+        where: { id: payload.id },
+        data: {
+          name: payload.name,
+          scope: payload.scope,
+          variables: this.variablesToJson(payload.variables),
+        },
+      });
+      return this.toEnvironment(environment);
+    }
+
+    const environment = await this.prisma.environment.create({
+      data: {
+        id: randomUUID(),
+        projectId,
+        name: payload.name,
+        scope: payload.scope,
+        variables: this.variablesToJson(payload.variables),
+      },
+    });
+
+    return this.toEnvironment(environment);
+  }
+
+  private async saveRequestSystem(
+    projectId: string,
+    payload: Omit<RequestDefinition, "projectId" | "updatedAt" | "id"> & { id?: string },
+  ) {
+    const project = await this.ensureProjectExists(projectId);
+
+    if (payload.collectionId) {
+      const collection = await this.prisma.collection.findUnique({
+        where: { id: payload.collectionId },
+        select: { id: true, projectId: true },
+      });
+      if (!collection || collection.projectId !== project.id) {
+        throw new NotFoundException("Coleção não encontrada.");
+      }
+    }
+
+    if (payload.id) {
+      const existing = await this.prisma.request.findUnique({
+        where: { id: payload.id },
+        select: { id: true, projectId: true },
+      });
+      if (!existing || existing.projectId !== project.id) {
+        throw new NotFoundException("Request não encontrada.");
+      }
+
+      const request = await this.prisma.request.update({
+        where: { id: payload.id },
+        data: {
+          name: payload.name,
+          collectionId: payload.collectionId,
+          method: payload.method,
+          url: payload.url,
+          headers: this.keyValuesToJson(payload.headers),
+          queryParams: this.keyValuesToJson(payload.queryParams),
+          bodyType: payload.bodyType,
+          body: payload.body,
+          formData: this.formDataToJson(payload.formData),
+          postResponseScript: payload.postResponseScript,
+        },
+      });
+
+      return this.toRequest(request);
+    }
+
+    const request = await this.prisma.request.create({
+      data: {
+        id: randomUUID(),
+        projectId,
+        collectionId: payload.collectionId,
+        name: payload.name,
+        method: payload.method,
+        url: payload.url,
+        headers: this.keyValuesToJson(payload.headers),
+        queryParams: this.keyValuesToJson(payload.queryParams),
+        bodyType: payload.bodyType,
+        body: payload.body,
+        formData: this.formDataToJson(payload.formData),
+        postResponseScript: payload.postResponseScript,
+      },
+    });
+
+    return this.toRequest(request);
   }
 
   private hashToken(token: string) {
@@ -1325,6 +2112,32 @@ export class StoreService {
     };
   }
 
+  private toWorkspaceInvite(invite: InviteWithRelations): WorkspaceInvite {
+    return {
+      id: invite.id,
+      workspaceId: invite.workspaceId,
+      workspaceName: invite.workspace.name,
+      email: invite.email,
+      role: invite.role as WorkspaceInvite["role"],
+      status: invite.status as WorkspaceInvite["status"],
+      invitedBy: this.sanitizeUser(invite.invitedBy),
+      createdAt: invite.createdAt.toISOString(),
+      updatedAt: invite.updatedAt.toISOString(),
+    };
+  }
+
+  private toNotification(notification: NotificationWithRelations): Notification {
+    return {
+      id: notification.id,
+      type: notification.type as Notification["type"],
+      title: notification.title,
+      body: notification.body,
+      readAt: notification.readAt?.toISOString(),
+      createdAt: notification.createdAt.toISOString(),
+      invite: notification.invite ? this.toWorkspaceInvite(notification.invite) : undefined,
+    };
+  }
+
   private parseVariables(value: Prisma.JsonValue): Variable[] {
     if (!Array.isArray(value)) {
       return [];
@@ -1409,5 +2222,50 @@ export class StoreService {
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, Prisma.JsonValue>)
       : {};
+  }
+
+  private async createNotificationsForPendingInvites(user: PrismaUser) {
+    const invites = await this.prisma.workspaceInvite.findMany({
+      where: {
+        email: user.email.toLowerCase(),
+        status: "pending",
+      },
+      include: {
+        workspace: true,
+        invitedBy: true,
+      },
+    });
+
+    for (const invite of invites) {
+      await this.ensureInviteNotification(user.id, invite);
+    }
+  }
+
+  private async ensureInviteNotification(userId: string, invite: InviteWithRelations) {
+    const existing = await this.prisma.notification.findFirst({
+      where: {
+        userId,
+        inviteId: invite.id,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      return;
+    }
+
+    await this.prisma.notification.create({
+      data: {
+        id: randomUUID(),
+        userId,
+        inviteId: invite.id,
+        type: "workspace_invite",
+        title: `Convite para ${invite.workspace.name}`,
+        body: `${invite.invitedBy.name} convidou você para o workspace ${invite.workspace.name}.`,
+        metadata: {
+          workspaceId: invite.workspaceId,
+          role: invite.role,
+        },
+      },
+    });
   }
 }

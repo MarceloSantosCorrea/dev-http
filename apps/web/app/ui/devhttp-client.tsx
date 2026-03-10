@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { ExternalLink } from "lucide-react";
+import { Bell, ChevronDown, ExternalLink, Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type {
   AuthResponse,
   BodyType,
@@ -13,11 +14,15 @@ import type {
   FormDataField,
   HttpMethod,
   KeyValue,
+  Notification,
   PostmanImportResult,
   RequestDefinition,
   User,
   UserPreferences,
   Variable,
+  WorkspaceInvite,
+  WorkspaceMember,
+  WorkspaceMembership,
 } from "@devhttp/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -31,7 +36,7 @@ import { cn } from "@/lib/utils";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
-const DESKTOP_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases/latest";
+const DESKTOP_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
 
 type BootstrapCollection = {
   id: string;
@@ -60,8 +65,14 @@ type BootstrapResponse = {
   projects: BootstrapProject[];
 };
 
+type SessionResponse = {
+  user: User;
+  workspaceId: string;
+  workspaces: WorkspaceMembership[];
+};
+
 type ThemeMode = UserPreferences["themeMode"];
-type SettingsTab = "profile" | "appearance" | "security";
+type SettingsTab = "profile" | "appearance" | "security" | "workspace";
 
 type ProfileFormState = {
   name: string;
@@ -73,6 +84,11 @@ type PasswordFormState = {
   currentPassword: string;
   newPassword: string;
   confirmPassword: string;
+};
+
+type WorkspaceInviteFormState = {
+  email: string;
+  role: "admin" | "editor" | "viewer";
 };
 
 type PostmanCollectionFile = {
@@ -105,7 +121,14 @@ type EnvironmentEditorTab = {
 
 type EditorTab = RequestEditorTab | EnvironmentEditorTab;
 
-type CreateModalType = "project" | "collection" | "environment" | null;
+type CreateModalType = "workspace" | "project" | "collection" | "environment" | null;
+type RenameEntityType = "workspace" | "project" | "collection" | "request";
+type RenameModalState = {
+  type: RenameEntityType;
+  id: string;
+  projectId?: string;
+  currentName: string;
+} | null;
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -200,6 +223,18 @@ function createRequestEditorTab(
     isDirty: false,
     savedSnapshot: serializeRequestSnapshot(draft),
   };
+}
+
+function updateSerializedRequestSnapshotName(snapshot: string, name: string) {
+  try {
+    const parsed = JSON.parse(snapshot) as Record<string, unknown>;
+    return JSON.stringify({
+      ...parsed,
+      name,
+    });
+  } catch {
+    return snapshot;
+  }
 }
 
 function getCookieValue(name: string) {
@@ -345,7 +380,7 @@ function isPostmanEnvironmentFile(value: unknown): value is PostmanEnvironmentFi
 }
 
 const selectClass =
-  "h-8 rounded-lg border border-input bg-muted/50 px-2.5 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring";
+  "h-8 rounded-lg border border-input bg-muted/50 pl-2.5 pr-8 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring select-custom";
 
 function getInitials(name: string) {
   return name
@@ -392,10 +427,12 @@ function emptyPasswordForm(): PasswordFormState {
 }
 
 export function DevHttpClient() {
-  const [email, setEmail] = useState("admin@devhttp.local");
-  const [password, setPassword] = useState("devhttp123");
+  const router = useRouter();
   const [auth, setAuth] = useState<AuthResponse | null>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [workspaceInvites, setWorkspaceInvites] = useState<WorkspaceInvite[]>([]);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
@@ -412,6 +449,8 @@ export function DevHttpClient() {
   const [projectSearch, setProjectSearch] = useState("");
   const [createModalType, setCreateModalType] = useState<CreateModalType>(null);
   const [createName, setCreateName] = useState("");
+  const [renameModal, setRenameModal] = useState<RenameModalState>(null);
+  const [renameName, setRenameName] = useState("");
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<BootstrapProject | null>(null);
   const [deleteProjectConfirmation, setDeleteProjectConfirmation] = useState("");
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
@@ -446,7 +485,18 @@ export function DevHttpClient() {
   const [avatarZoom, setAvatarZoom] = useState(1);
   const [avatarOffsetX, setAvatarOffsetX] = useState(0);
   const [avatarOffsetY, setAvatarOffsetY] = useState(0);
+  const [workspaceInviteForm, setWorkspaceInviteForm] = useState<WorkspaceInviteFormState>({
+    email: "",
+    role: "viewer",
+  });
+  const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
+  const [isEditorNewMenuOpen, setIsEditorNewMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const notificationsRef = useRef<HTMLDivElement | null>(null);
+  const newMenuRef = useRef<HTMLDivElement | null>(null);
+  const editorNewMenuRef = useRef<HTMLDivElement | null>(null);
 
   const selectedProject = useMemo(
     () => bootstrap?.projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -470,6 +520,11 @@ export function DevHttpClient() {
       project.name.toLowerCase().includes(search),
     );
   }, [bootstrap?.projects, projectSearch]);
+
+  const membershipRole = bootstrap?.membership.role as WorkspaceMember["role"] | undefined;
+  const canRenameWorkspace = membershipRole === "owner" || membershipRole === "admin";
+  const canRenameProjectEntities =
+    membershipRole === "owner" || membershipRole === "admin" || membershipRole === "editor";
 
   const isEnvironmentDirty = useMemo(() => {
     if (!selectedEnvironment) return false;
@@ -526,17 +581,10 @@ export function DevHttpClient() {
 
     async function restoreSession() {
       try {
-        const session = await requestJson<{
-          user: User;
-          workspaceId: string;
-          workspaces: Array<{ id: string; name: string }>;
-        }>("/auth/me");
+        const session = await requestJson<SessionResponse>("/auth/me");
         if (!cancelled) {
           restoredSession = true;
-          setAuth({
-            user: session.user,
-            workspaceId: session.workspaceId,
-          });
+          setAuth(session);
         }
       } catch {
         if (!cancelled) {
@@ -556,9 +604,14 @@ export function DevHttpClient() {
   }, []);
 
   useEffect(() => {
+    if (!isSessionLoading && !auth) {
+      router.replace("/login");
+    }
+  }, [auth, isSessionLoading, router]);
+
+  useEffect(() => {
     if (!auth) {
       setBootstrap(null);
-      setIsSessionLoading(false);
       return;
     }
 
@@ -609,6 +662,19 @@ export function DevHttpClient() {
         setIsSessionLoading(false);
       }
     });
+  }, [auth]);
+
+  useEffect(() => {
+    if (!auth) {
+      setNotifications([]);
+      return;
+    }
+
+    requestJson<Notification[]>("/notifications", {
+      headers: authHeaders(auth.token),
+    })
+      .then((items) => setNotifications(items))
+      .catch(() => {});
   }, [auth]);
 
   useEffect(() => {
@@ -725,6 +791,45 @@ export function DevHttpClient() {
   }, [isUserMenuOpen]);
 
   useEffect(() => {
+    if (!isNotificationsOpen) {
+      return;
+    }
+
+    function handleClick(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Node && notificationsRef.current?.contains(target)) {
+        return;
+      }
+      setIsNotificationsOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isNotificationsOpen]);
+
+  useEffect(() => {
+    if (!isNewMenuOpen) return;
+    function handleClick(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Node && newMenuRef.current?.contains(target)) return;
+      setIsNewMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isNewMenuOpen]);
+
+  useEffect(() => {
+    if (!isEditorNewMenuOpen) return;
+    function handleClick(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Node && editorNewMenuRef.current?.contains(target)) return;
+      setIsEditorNewMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isEditorNewMenuOpen]);
+
+  useEffect(() => {
     if (!isSettingsOpen) {
       return;
     }
@@ -762,24 +867,6 @@ export function DevHttpClient() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTabId, openTabs, selectedCollectionId, selectedProjectId, auth]);
-
-  async function handleLogin() {
-    try {
-      setFeedback("");
-      setIsSessionLoading(true);
-      const result = await requestJson<AuthResponse>("/auth/login", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      });
-      setAuth(result);
-    } catch (error) {
-      setIsSessionLoading(false);
-      setFeedback(error instanceof Error ? error.message : "Falha no login.");
-    }
-  }
 
   async function saveRequestTab(tabId: string) {
     if (!auth || !selectedProject) {
@@ -1162,6 +1249,9 @@ export function DevHttpClient() {
     setAvatarOffsetY(0);
     setIsSettingsOpen(true);
     setPasswordForm(emptyPasswordForm());
+    if (tab === "workspace") {
+      void loadWorkspaceManagement();
+    }
   }
 
   function closeSettings() {
@@ -1176,6 +1266,193 @@ export function DevHttpClient() {
     setAvatarOffsetY(0);
     setIsSettingsOpen(false);
     setPasswordForm(emptyPasswordForm());
+  }
+
+  async function refreshNotifications() {
+    if (!auth) {
+      return;
+    }
+
+    try {
+      const nextNotifications = await requestJson<Notification[]>("/notifications", {
+        headers: authHeaders(auth.token),
+      });
+      setNotifications(nextNotifications);
+    } catch {
+      // noop
+    }
+  }
+
+  async function loadWorkspaceManagement() {
+    if (!auth || !bootstrap) {
+      return;
+    }
+
+    try {
+      const members = await requestJson<WorkspaceMember[]>(
+        `/workspaces/${bootstrap.workspace.id}/members`,
+        {
+          headers: authHeaders(auth.token),
+        },
+      );
+      setWorkspaceMembers(members);
+    } catch {
+      setWorkspaceMembers([]);
+    }
+
+    try {
+      const invites = await requestJson<WorkspaceInvite[]>(
+        `/workspaces/${bootstrap.workspace.id}/invites`,
+        {
+          headers: authHeaders(auth.token),
+        },
+      );
+      setWorkspaceInvites(invites);
+    } catch {
+      setWorkspaceInvites([]);
+    }
+  }
+
+  function handleWorkspaceChange(workspaceId: string) {
+    setAuth((current) =>
+      current
+        ? {
+            ...current,
+            workspaceId,
+          }
+        : current,
+    );
+    setNotifications([]);
+    setOpenTabs([]);
+    setActiveTabId("");
+    setSelectedProjectId("");
+    setSelectedCollectionId("");
+    setSelectedEnvironmentId("");
+  }
+
+  async function handleCreateWorkspaceInvite() {
+    if (!auth || !bootstrap) {
+      return;
+    }
+
+    if (!workspaceInviteForm.email.trim()) {
+      setFeedback("Informe o email para convidar.");
+      return;
+    }
+
+    setIsWorkspaceSaving(true);
+    try {
+      await requestJson<WorkspaceInvite>(`/workspaces/${bootstrap.workspace.id}/invites`, {
+        method: "POST",
+        headers: authHeaders(auth.token),
+        body: JSON.stringify({
+          email: workspaceInviteForm.email.trim(),
+          role: workspaceInviteForm.role,
+        }),
+      });
+      setWorkspaceInviteForm({ email: "", role: "viewer" });
+      await loadWorkspaceManagement();
+      setFeedback("Convite enviado.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao enviar convite.");
+    } finally {
+      setIsWorkspaceSaving(false);
+    }
+  }
+
+  async function handleUpdateWorkspaceMemberRole(memberUserId: string, role: WorkspaceMember["role"]) {
+    if (!auth || !bootstrap) {
+      return;
+    }
+
+    setIsWorkspaceSaving(true);
+    try {
+      await requestJson<WorkspaceMember>(`/workspaces/${bootstrap.workspace.id}/members/${memberUserId}`, {
+        method: "PATCH",
+        headers: authHeaders(auth.token),
+        body: JSON.stringify({ role }),
+      });
+      await loadWorkspaceManagement();
+      setFeedback("Permissão do membro atualizada.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao atualizar membro.");
+    } finally {
+      setIsWorkspaceSaving(false);
+    }
+  }
+
+  async function handleRemoveWorkspaceMember(memberUserId: string) {
+    if (!auth || !bootstrap) {
+      return;
+    }
+
+    setIsWorkspaceSaving(true);
+    try {
+      await requestJson(`/workspaces/${bootstrap.workspace.id}/members/${memberUserId}`, {
+        method: "DELETE",
+        headers: authHeaders(auth.token),
+      });
+      await loadWorkspaceManagement();
+      setFeedback("Membro removido do workspace.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao remover membro.");
+    } finally {
+      setIsWorkspaceSaving(false);
+    }
+  }
+
+  async function handleRevokeWorkspaceInvite(inviteId: string) {
+    if (!auth || !bootstrap) {
+      return;
+    }
+
+    setIsWorkspaceSaving(true);
+    try {
+      await requestJson(`/workspaces/${bootstrap.workspace.id}/invites/${inviteId}`, {
+        method: "DELETE",
+        headers: authHeaders(auth.token),
+      });
+      await loadWorkspaceManagement();
+      await refreshNotifications();
+      setFeedback("Convite revogado.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao revogar convite.");
+    } finally {
+      setIsWorkspaceSaving(false);
+    }
+  }
+
+  async function handleWorkspaceInviteAction(notification: Notification, action: "accept" | "decline") {
+    if (!auth || !notification.invite) {
+      return;
+    }
+
+    try {
+      const path =
+        action === "accept"
+          ? `/workspaces/invites/${notification.invite.id}/accept`
+          : `/workspaces/invites/${notification.invite.id}/decline`;
+      const result = await requestJson<{ workspaces?: WorkspaceMembership[] }>(path, {
+        method: "POST",
+        headers: authHeaders(auth.token),
+      });
+
+      setNotifications((current) => current.filter((item) => item.id !== notification.id));
+      if (result.workspaces) {
+        setAuth((current) =>
+          current
+            ? {
+                ...current,
+                workspaces: result.workspaces ?? current.workspaces,
+              }
+            : current,
+        );
+      }
+      await refreshNotifications();
+      setFeedback(action === "accept" ? "Convite aceito." : "Convite recusado.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao processar convite.");
+    }
   }
 
   async function handleLogout() {
@@ -1193,6 +1470,7 @@ export function DevHttpClient() {
     } finally {
       setAuth(null);
       setBootstrap(null);
+      setNotifications([]);
       setIsSessionLoading(false);
       setSelectedProjectId("");
       setSelectedCollectionId("");
@@ -1202,6 +1480,7 @@ export function DevHttpClient() {
       setIsUserMenuOpen(false);
       setIsSettingsOpen(false);
       setFeedback("");
+      router.replace("/login");
     }
   }
 
@@ -1392,6 +1671,33 @@ export function DevHttpClient() {
     }
 
     try {
+      if (createModalType === "workspace") {
+        const created = await requestJson<WorkspaceMembership>(
+          `/workspaces`,
+          {
+            method: "POST",
+            headers: authHeaders(auth.token),
+            body: JSON.stringify({ name }),
+          },
+        );
+        setAuth((current) =>
+          current
+            ? {
+                ...current,
+                workspaceId: created.workspace.id,
+                workspaces: [...current.workspaces, created],
+              }
+            : current,
+        );
+        setBootstrap(null);
+        setSelectedProjectId("");
+        setSelectedCollectionId("");
+        setSelectedEnvironmentId("");
+        setOpenTabs([]);
+        setActiveTabId("");
+        setFeedback("Workspace criado.");
+      }
+
       if (createModalType === "project") {
         const created = await requestJson<BootstrapProject>(
           `/workspaces/${bootstrap.workspace.id}/projects`,
@@ -1541,6 +1847,8 @@ export function DevHttpClient() {
     setCreateModalType(type);
     setCreateName("");
     setIsMenuOpen(false);
+    setIsNewMenuOpen(false);
+    setIsEditorNewMenuOpen(false);
     setCollectionMenu(null);
   }
 
@@ -1550,6 +1858,190 @@ export function DevHttpClient() {
     setIsMenuOpen(false);
     setCollectionMenu(null);
     setCreateModalType(null);
+  }
+
+  function openRenameModal(
+    type: RenameEntityType,
+    id: string,
+    currentName: string,
+    projectId?: string,
+  ) {
+    setRenameModal({ type, id, currentName, projectId });
+    setRenameName(currentName);
+    setIsMenuOpen(false);
+    setCollectionMenu(null);
+  }
+
+  async function handleRenameEntity() {
+    if (!auth || !bootstrap || !renameModal) {
+      return;
+    }
+
+    const nextName = renameName.trim();
+    if (!nextName) {
+      setFeedback("Informe um nome válido para renomear o item.");
+      return;
+    }
+
+    if (nextName === renameModal.currentName.trim()) {
+      setRenameModal(null);
+      setRenameName("");
+      return;
+    }
+
+    try {
+      if (renameModal.type === "workspace") {
+        const updated = await requestJson<{ id: string; name: string }>(
+          `/workspaces/${renameModal.id}`,
+          {
+            method: "PATCH",
+            headers: authHeaders(auth.token),
+            body: JSON.stringify({ name: nextName }),
+          },
+        );
+
+        setBootstrap((current) =>
+          current
+            ? {
+                ...current,
+                workspace: updated,
+              }
+            : current,
+        );
+        setAuth((current) =>
+          current
+            ? {
+                ...current,
+                workspaces: current.workspaces.map((membership) =>
+                  membership.workspace.id === updated.id
+                    ? {
+                        ...membership,
+                        workspace: {
+                          ...membership.workspace,
+                          name: updated.name,
+                        },
+                      }
+                    : membership,
+                ),
+              }
+            : current,
+        );
+        setFeedback("Workspace renomeado.");
+      }
+
+      if (renameModal.type === "project") {
+        const updated = await requestJson<{ id: string; workspaceId: string; name: string; description: string }>(
+          `/projects/${renameModal.id}`,
+          {
+            method: "PATCH",
+            headers: authHeaders(auth.token),
+            body: JSON.stringify({ name: nextName }),
+          },
+        );
+
+        setBootstrap((current) =>
+          current
+            ? {
+                ...current,
+                projects: current.projects.map((project) =>
+                  project.id === updated.id
+                    ? {
+                        ...project,
+                        name: updated.name,
+                        description: updated.description,
+                      }
+                    : project,
+                ),
+              }
+            : current,
+        );
+        setFeedback("Projeto renomeado.");
+      }
+
+      if (renameModal.type === "collection" && renameModal.projectId) {
+        const updated = await requestJson<BootstrapCollection>(
+          `/projects/${renameModal.projectId}/collections/${renameModal.id}`,
+          {
+            method: "PATCH",
+            headers: authHeaders(auth.token),
+            body: JSON.stringify({ name: nextName }),
+          },
+        );
+
+        setBootstrap((current) =>
+          current
+            ? {
+                ...current,
+                projects: current.projects.map((project) =>
+                  project.id === renameModal.projectId
+                    ? {
+                        ...project,
+                        collections: project.collections.map((collection) =>
+                          collection.id === updated.id ? { ...collection, name: updated.name } : collection,
+                        ),
+                      }
+                    : project,
+                ),
+              }
+            : current,
+        );
+        setFeedback("Coleção renomeada.");
+      }
+
+      if (renameModal.type === "request" && renameModal.projectId) {
+        const updated = await requestJson<BootstrapRequest>(
+          `/projects/${renameModal.projectId}/requests/${renameModal.id}`,
+          {
+            method: "PATCH",
+            headers: authHeaders(auth.token),
+            body: JSON.stringify({ name: nextName }),
+          },
+        );
+
+        setBootstrap((current) =>
+          current
+            ? {
+                ...current,
+                projects: current.projects.map((project) =>
+                  project.id === renameModal.projectId
+                    ? {
+                        ...project,
+                        requests: project.requests.map((request) =>
+                          request.id === updated.id ? { ...request, name: updated.name } : request,
+                        ),
+                      }
+                    : project,
+                ),
+              }
+            : current,
+        );
+        setOpenTabs((current) =>
+          current.map((tab) => {
+            if (tab.type !== "request" || tab.draft.id !== updated.id) {
+              return tab;
+            }
+
+            const draft = {
+              ...tab.draft,
+              name: updated.name,
+            };
+            const savedSnapshot = updateSerializedRequestSnapshotName(tab.savedSnapshot, updated.name);
+            return {
+              ...tab,
+              draft,
+              savedSnapshot,
+              isDirty: serializeRequestSnapshot(draft) !== savedSnapshot,
+            };
+          }),
+        );
+        setFeedback("Request renomeada.");
+      }
+
+      setRenameModal(null);
+      setRenameName("");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao renomear item.");
+    }
   }
 
   function updateRequestTabDraft(
@@ -1800,48 +2292,14 @@ export function DevHttpClient() {
     return (
       <main className="min-h-screen grid place-items-center p-8">
         <Card className="w-full max-w-lg backdrop-blur-xl">
-          <CardHeader>
-            <p className="text-[0.7rem] uppercase tracking-widest text-primary font-semibold">
-              DevHttp
-            </p>
-            <CardTitle className="text-2xl font-bold">
-              Cliente HTTP colaborativo para web e desktop
-            </CardTitle>
+          <CardHeader className="items-center text-center gap-2">
+            <p className="text-4xl font-bold tracking-tight text-primary">DevHttp</p>
+            <CardTitle className="text-2xl font-bold">Redirecionando para login</CardTitle>
             <CardDescription>
-              Faça login para acessar projetos, requests, ambientes e executar chamadas via proxy.
+              Sua sessão não está ativa. Encaminhando para a tela de autenticação.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="password">Senha</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </div>
-            <Button onClick={handleLogin} disabled={isPending} size="lg" className="w-full mt-1">
-              Entrar
-            </Button>
-            <p className="text-xs text-muted-foreground font-mono">
-              Credenciais seed podem variar por ambiente.
-            </p>
-            <a
-              href={DESKTOP_DOWNLOAD_URL}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
-            >
-              <ExternalLink className="size-4" />
-              Baixar app para desktop
-            </a>
-            {feedback ? <p className="text-sm text-destructive">{feedback}</p> : null}
-          </CardContent>
+          <CardContent>{feedback ? <p className="text-sm text-destructive">{feedback}</p> : null}</CardContent>
         </Card>
       </main>
     );
@@ -1896,9 +2354,6 @@ export function DevHttpClient() {
           <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid gap-4 content-start">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-[0.65rem] uppercase tracking-widest text-primary font-semibold mb-0.5">
-                  {bootstrap.workspace.name}
-                </p>
                 <h1 className="text-lg font-bold leading-tight">DevHttp</h1>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {bootstrap.user.name} · {bootstrap.membership.role}
@@ -1915,21 +2370,111 @@ export function DevHttpClient() {
             </div>
 
             <div className="flex items-center gap-2">
+              <select
+                value={auth.workspaceId}
+                onChange={(event) => handleWorkspaceChange(event.target.value)}
+                className={cn(selectClass, "flex-1 h-9")}
+              >
+                {auth.workspaces.map((membership) => (
+                  <option key={membership.workspace.id} value={membership.workspace.id}>
+                    {membership.workspace.name}
+                  </option>
+                ))}
+              </select>
+              <div ref={notificationsRef} className="relative">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={() => setIsNotificationsOpen((current) => !current)}
+                  title="Notificações"
+                >
+                  <Bell className="size-4" />
+                  {notifications.some((item) => !item.readAt) ? (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
+                  ) : null}
+                </Button>
+                {isNotificationsOpen ? (
+                  <div className="absolute left-0 top-11 z-30 w-80 rounded-xl border border-border bg-popover p-2 shadow-xl">
+                    <div className="mb-2 flex items-center justify-between px-2">
+                      <p className="text-sm font-semibold">Notificações</p>
+                      <span className="text-xs text-muted-foreground">{notifications.length}</span>
+                    </div>
+                    <div className="grid gap-2">
+                      {notifications.length === 0 ? (
+                        <p className="px-2 py-3 text-sm text-muted-foreground">
+                          Nenhuma notificação pendente.
+                        </p>
+                      ) : (
+                        notifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            className="rounded-lg border border-border/60 bg-card/70 p-3"
+                          >
+                            <p className="text-sm font-medium">{notification.title}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{notification.body}</p>
+                            {notification.invite ? (
+                              <div className="mt-3 flex gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => void handleWorkspaceInviteAction(notification, "accept")}
+                                >
+                                  Aceitar
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void handleWorkspaceInviteAction(notification, "decline")}
+                                >
+                                  Recusar
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
               <Input
                 value={projectSearch}
                 onChange={(event) => setProjectSearch(event.target.value)}
                 placeholder="Pesquisar projeto"
                 className="h-8"
               />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => openCreateModal("project")}
-                title="Novo projeto"
-              >
-                +
-              </Button>
+              <div ref={newMenuRef} className="relative">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => setIsNewMenuOpen((c) => !c)}
+                  title="Novo"
+                >
+                  +
+                </Button>
+                {isNewMenuOpen ? (
+                  <div className="absolute left-0 top-10 z-20 min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl">
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => openCreateModal("workspace")}
+                    >
+                      Workspace
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() => openCreateModal("project")}
+                    >
+                      Projeto
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <div className="relative">
                 <Button
                   variant="outline"
@@ -2007,6 +2552,19 @@ export function DevHttpClient() {
                         <span className="text-xs text-muted-foreground truncate">{project.description}</span>
                       ) : null}
                     </button>
+                    {canRenameProjectEntities ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openRenameModal("project", project.id, project.name, project.id);
+                        }}
+                        className="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md border border-transparent text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground transition-colors shrink-0"
+                        title="Renomear projeto"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={(event) => {
@@ -2064,6 +2622,20 @@ export function DevHttpClient() {
                                     <span className="font-medium truncate min-w-0">{collection.name}</span>
                                   </button>
 
+                                  {canRenameProjectEntities ? (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openRenameModal("collection", collection.id, collection.name, project.id);
+                                      }}
+                                      className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/collection:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+                                      title="Renomear coleção"
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </button>
+                                  ) : null}
+
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -2086,22 +2658,39 @@ export function DevHttpClient() {
                                   <div className="grid">
                                     {collectionRequests.length > 0 ? (
                                       collectionRequests.map((request) => (
-                                        <button
+                                        <div
                                           key={request.id}
-                                          type="button"
-                                          onClick={() => selectRequest(request)}
                                           className={cn(
-                                            "flex items-center gap-1.5 w-full min-w-0 pl-4 pr-1 py-0.5 text-xs rounded transition-colors text-left",
+                                            "group/request flex items-center gap-1.5 w-full min-w-0 pl-4 pr-1 py-0.5 text-xs rounded transition-colors",
                                             activeTabId === request.id
                                               ? "text-foreground bg-primary/8"
                                               : "text-muted-foreground hover:text-foreground hover:bg-white/5",
                                           )}
                                         >
-                                          <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
-                                            {request.method}
-                                          </span>
-                                          <span className="truncate min-w-0">{request.name}</span>
-                                        </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => selectRequest(request)}
+                                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                                          >
+                                            <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
+                                              {request.method}
+                                            </span>
+                                            <span className="truncate min-w-0">{request.name}</span>
+                                          </button>
+                                          {canRenameProjectEntities ? (
+                                            <button
+                                              type="button"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                openRenameModal("request", request.id, request.name, project.id);
+                                              }}
+                                              className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/request:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+                                              title="Renomear request"
+                                            >
+                                              <Pencil className="h-3 w-3" />
+                                            </button>
+                                          ) : null}
+                                        </div>
                                       ))
                                     ) : (
                                       <p className="pl-4 text-xs text-muted-foreground">
@@ -2290,13 +2879,39 @@ export function DevHttpClient() {
           {openTabs.length === 0 ? (
             <div className="grid place-items-center py-24">
               <div className="text-center grid gap-3">
-                <p className="text-muted-foreground text-sm">
-                  {selectedProject ? "Nenhuma request aberta" : "Nenhum projeto selecionado"}
-                </p>
-                {selectedProject && (
-                  <Button variant="outline" size="sm" onClick={() => handleCreateNewRequest()}>
-                    + Nova request
-                  </Button>
+                {selectedProject ? (
+                  <>
+                    <p className="text-muted-foreground text-sm">Nenhuma request aberta</p>
+                    <Button variant="outline" size="sm" onClick={() => handleCreateNewRequest()}>
+                      + Nova request
+                    </Button>
+                  </>
+                ) : (
+                  <div ref={editorNewMenuRef} className="relative inline-block">
+                    <Button
+                      onClick={() => setIsEditorNewMenuOpen((c) => !c)}
+                    >
+                      + Novo
+                    </Button>
+                    {isEditorNewMenuOpen ? (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-10 z-20 min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl">
+                        <button
+                          type="button"
+                          className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                          onClick={() => openCreateModal("workspace")}
+                        >
+                          Workspace
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                          onClick={() => openCreateModal("project")}
+                        >
+                          Projeto
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 )}
               </div>
             </div>
@@ -2422,7 +3037,7 @@ export function DevHttpClient() {
                                 addFormDataField("text");
                               }
                             }}
-                            className={cn(selectClass, "h-7 text-xs px-2")}
+                            className={cn(selectClass, "h-7 text-xs pl-2")}
                           >
                             <option value="json">JSON</option>
                             <option value="text">Texto</option>
@@ -2635,11 +3250,13 @@ export function DevHttpClient() {
       <CreateItemModal
         open={createModalType !== null}
         title={
-          createModalType === "project"
-            ? "Novo projeto"
-            : createModalType === "collection"
-              ? "Nova colecao"
-              : "Novo ambiente"
+          createModalType === "workspace"
+            ? "Novo workspace"
+            : createModalType === "project"
+              ? "Novo projeto"
+              : createModalType === "collection"
+                ? "Nova colecao"
+                : "Novo ambiente"
         }
         value={createName}
         onChange={setCreateName}
@@ -2648,6 +3265,26 @@ export function DevHttpClient() {
           setCreateName("");
         }}
         onSubmit={() => void handleCreateEntity()}
+      />
+
+      <RenameItemModal
+        open={renameModal !== null}
+        title={
+          renameModal?.type === "workspace"
+            ? "Renomear workspace"
+            : renameModal?.type === "project"
+              ? "Renomear projeto"
+              : renameModal?.type === "collection"
+                ? "Renomear coleção"
+                : "Renomear request"
+        }
+        value={renameName}
+        onChange={setRenameName}
+        onClose={() => {
+          setRenameModal(null);
+          setRenameName("");
+        }}
+        onSubmit={() => void handleRenameEntity()}
       />
 
       <DeleteProjectModal
@@ -2688,6 +3325,13 @@ export function DevHttpClient() {
         isProfileSaving={isProfileSaving}
         isAppearanceSaving={isAppearanceSaving}
         isPasswordSaving={isPasswordSaving}
+        workspaceName={bootstrap?.workspace.name ?? ""}
+        workspaceRole={(bootstrap?.membership.role ?? "viewer") as WorkspaceMember["role"]}
+        workspaceMembers={workspaceMembers}
+        workspaceInvites={workspaceInvites}
+        workspaceInviteForm={workspaceInviteForm}
+        isWorkspaceSaving={isWorkspaceSaving}
+        canRenameWorkspace={canRenameWorkspace}
         onTabChange={setSettingsTab}
         onClose={closeSettings}
         onProfileFieldChange={(key, value) =>
@@ -2720,6 +3364,19 @@ export function DevHttpClient() {
           }))
         }
         onSavePassword={() => void handleChangePassword()}
+        onWorkspaceInviteFieldChange={(key, value) =>
+          setWorkspaceInviteForm((current) => ({
+            ...current,
+            [key]: value,
+          }))
+        }
+        onSaveWorkspaceInvite={() => void handleCreateWorkspaceInvite()}
+        onRenameWorkspace={() => openRenameModal("workspace", bootstrap.workspace.id, bootstrap.workspace.name)}
+        onUpdateWorkspaceMemberRole={(memberUserId, role) =>
+          void handleUpdateWorkspaceMemberRole(memberUserId, role)
+        }
+        onRemoveWorkspaceMember={(memberUserId) => void handleRemoveWorkspaceMember(memberUserId)}
+        onRevokeWorkspaceInvite={(inviteId) => void handleRevokeWorkspaceInvite(inviteId)}
       />
 
       {collectionMenu && createPortal(
@@ -2992,6 +3649,63 @@ function CreateItemModal({
   );
 }
 
+function RenameItemModal({
+  open,
+  title,
+  value,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  value: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  const canSubmit = Boolean(value.trim());
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>Informe o novo nome do item.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <Input
+            autoFocus
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Nome"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && canSubmit) {
+                onSubmit();
+              }
+              if (event.key === "Escape") {
+                onClose();
+              }
+            }}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button onClick={onSubmit} disabled={!canSubmit}>
+              Salvar
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function DeleteProjectModal({
   open,
   projectName,
@@ -3148,6 +3862,13 @@ function SettingsModal({
   isProfileSaving,
   isAppearanceSaving,
   isPasswordSaving,
+  workspaceName,
+  workspaceRole,
+  workspaceMembers,
+  workspaceInvites,
+  workspaceInviteForm,
+  isWorkspaceSaving,
+  canRenameWorkspace,
   onTabChange,
   onClose,
   onProfileFieldChange,
@@ -3161,6 +3882,12 @@ function SettingsModal({
   onSaveAppearance,
   onPasswordFieldChange,
   onSavePassword,
+  onWorkspaceInviteFieldChange,
+  onSaveWorkspaceInvite,
+  onRenameWorkspace,
+  onUpdateWorkspaceMemberRole,
+  onRemoveWorkspaceMember,
+  onRevokeWorkspaceInvite,
 }: {
   open: boolean;
   tab: SettingsTab;
@@ -3178,6 +3905,13 @@ function SettingsModal({
   isProfileSaving: boolean;
   isAppearanceSaving: boolean;
   isPasswordSaving: boolean;
+  workspaceName: string;
+  workspaceRole: WorkspaceMember["role"];
+  workspaceMembers: WorkspaceMember[];
+  workspaceInvites: WorkspaceInvite[];
+  workspaceInviteForm: WorkspaceInviteFormState;
+  isWorkspaceSaving: boolean;
+  canRenameWorkspace: boolean;
   onTabChange: (tab: SettingsTab) => void;
   onClose: () => void;
   onProfileFieldChange: (key: keyof ProfileFormState, value: string) => void;
@@ -3191,12 +3925,19 @@ function SettingsModal({
   onSaveAppearance: () => void;
   onPasswordFieldChange: (key: keyof PasswordFormState, value: string) => void;
   onSavePassword: () => void;
+  onWorkspaceInviteFieldChange: (key: keyof WorkspaceInviteFormState, value: string) => void;
+  onSaveWorkspaceInvite: () => void;
+  onRenameWorkspace: () => void;
+  onUpdateWorkspaceMemberRole: (memberUserId: string, role: WorkspaceMember["role"]) => void;
+  onRemoveWorkspaceMember: (memberUserId: string) => void;
+  onRevokeWorkspaceInvite: (inviteId: string) => void;
 }) {
   if (!open) {
     return null;
   }
 
   const avatarPreview = avatarSource || profileForm.avatarUrl;
+  const canManageWorkspace = workspaceRole === "owner" || workspaceRole === "admin";
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4">
@@ -3216,6 +3957,7 @@ function SettingsModal({
                 { id: "profile", label: "Dados Pessoais" },
                 { id: "appearance", label: "Aparência" },
                 { id: "security", label: "Segurança" },
+                { id: "workspace", label: "Workspace" },
               ].map((item) => (
                 <button
                   key={item.id}
@@ -3241,14 +3983,18 @@ function SettingsModal({
                       ? "Dados Pessoais"
                       : tab === "appearance"
                         ? "Aparência"
-                        : "Segurança"}
+                        : tab === "security"
+                          ? "Segurança"
+                          : "Workspace"}
                   </CardTitle>
                   <CardDescription>
                     {tab === "profile"
                       ? "Atualize nome, email e avatar do usuário."
                       : tab === "appearance"
                         ? "Escolha como o DevHttp deve aplicar o tema."
-                        : "Altere a senha da sua conta com validação da senha atual."}
+                        : tab === "security"
+                          ? "Altere a senha da sua conta com validação da senha atual."
+                          : "Gerencie membros e convites do workspace atual."}
                   </CardDescription>
                 </div>
                 <Button variant="ghost" size="sm" onClick={onClose}>
@@ -3477,6 +4223,153 @@ function SettingsModal({
                       {isPasswordSaving ? "Alterando..." : "Alterar senha"}
                     </Button>
                   </div>
+                </div>
+              ) : null}
+
+              {tab === "workspace" ? (
+                <div className="grid gap-6">
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">{workspaceName || "Workspace atual"}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Seu papel atual: <span className="font-medium text-foreground">{workspaceRole}</span>
+                        </p>
+                      </div>
+                      {canRenameWorkspace ? (
+                        <Button variant="outline" size="sm" onClick={onRenameWorkspace}>
+                          <Pencil className="mr-2 h-3.5 w-3.5" />
+                          Renomear
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {canManageWorkspace ? (
+                    <div className="grid gap-4 rounded-2xl border border-border/60 p-4">
+                      <div>
+                        <p className="text-sm font-semibold">Convidar por email</p>
+                        <p className="text-sm text-muted-foreground">
+                          O usuário receberá uma notificação para aceitar ou recusar o acesso.
+                        </p>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+                        <Input
+                          type="email"
+                          placeholder="usuario@empresa.com"
+                          value={workspaceInviteForm.email}
+                          onChange={(event) =>
+                            onWorkspaceInviteFieldChange("email", event.target.value)
+                          }
+                        />
+                        <select
+                          value={workspaceInviteForm.role}
+                          onChange={(event) =>
+                            onWorkspaceInviteFieldChange("role", event.target.value)
+                          }
+                          className={selectClass}
+                        >
+                          <option value="viewer">Viewer</option>
+                          <option value="editor">Editor</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                        <Button onClick={onSaveWorkspaceInvite} disabled={isWorkspaceSaving}>
+                          {isWorkspaceSaving ? "Enviando..." : "Convidar"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">Membros</p>
+                      <p className="text-sm text-muted-foreground">
+                        Usuários com acesso ao workspace atual.
+                      </p>
+                    </div>
+                    <div className="grid gap-2">
+                      {workspaceMembers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Nenhum membro encontrado.</p>
+                      ) : (
+                        workspaceMembers.map((member) => (
+                          <div
+                            key={member.user.id}
+                            className="grid gap-3 rounded-xl border border-border/60 bg-card/70 p-3 md:grid-cols-[minmax(0,1fr)_180px_auto]"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{member.user.name}</p>
+                              <p className="truncate text-xs text-muted-foreground">{member.user.email}</p>
+                            </div>
+                            <select
+                              value={member.role}
+                              onChange={(event) =>
+                                onUpdateWorkspaceMemberRole(
+                                  member.user.id,
+                                  event.target.value as WorkspaceMember["role"],
+                                )
+                              }
+                              className={selectClass}
+                              disabled={!canManageWorkspace}
+                            >
+                              <option value="owner">Owner</option>
+                              <option value="admin">Admin</option>
+                              <option value="editor">Editor</option>
+                              <option value="viewer">Viewer</option>
+                            </select>
+                            <Button
+                              variant="outline"
+                              onClick={() => onRemoveWorkspaceMember(member.user.id)}
+                              disabled={!canManageWorkspace || member.user.id === user?.id}
+                            >
+                              Remover
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {canManageWorkspace ? (
+                    <div className="grid gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">Convites pendentes</p>
+                        <p className="text-sm text-muted-foreground">
+                          Convites enviados e ainda não respondidos.
+                        </p>
+                      </div>
+                      <div className="grid gap-2">
+                        {workspaceInvites.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            Nenhum convite pendente neste workspace.
+                          </p>
+                        ) : (
+                          workspaceInvites.map((invite) => (
+                            <div
+                              key={invite.id}
+                              className="grid gap-3 rounded-xl border border-border/60 bg-card/70 p-3 md:grid-cols-[minmax(0,1fr)_140px_auto]"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">{invite.email}</p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  Convidado por {invite.invitedBy.name}
+                                </p>
+                              </div>
+                              <Badge variant="secondary" className="justify-center">
+                                {invite.role}
+                              </Badge>
+                              <Button
+                                variant="outline"
+                                onClick={() => onRevokeWorkspaceInvite(invite.id)}
+                                disabled={isWorkspaceSaving}
+                              >
+                                Revogar
+                              </Button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </CardContent>
