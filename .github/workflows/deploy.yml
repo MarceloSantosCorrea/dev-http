@@ -45,7 +45,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           port: 22
-          script_stop: true
           envs: GITHUB_REPOSITORY,GITHUB_REF_NAME
           script: |
             export APP_DIR=/var/www/dev-http/app
