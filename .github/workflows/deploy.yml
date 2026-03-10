@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: /api
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          port: 22
+          script_stop: true
+          envs: GITHUB_REPOSITORY,GITHUB_REF_NAME
+          script: |
+            export APP_DIR=/var/www/dev-http/app
+            export ENV_FILE=/etc/devhttp/devhttp.env
+            export DEPLOY_BRANCH="${GITHUB_REF_NAME}"
+            export REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"
+            /bin/bash "${APP_DIR}/scripts/deploy-remote.sh"

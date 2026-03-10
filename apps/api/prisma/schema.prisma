@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  owner
+  admin
+  editor
+  viewer
+}
+
+enum VariableScope {
+  workspace
+  project
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+  HEAD
+  OPTIONS
+}
+
+model User {
+  id           String          @id @db.VarChar(191)
+  name         String          @db.VarChar(191)
+  email        String          @unique @db.VarChar(191)
+  avatarUrl    String?         @db.LongText
+  passwordHash String          @db.VarChar(255)
+  memberships  Membership[]
+  sessions     SessionToken[]
+  preference   UserPreference?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model Workspace {
+  id          String       @id @db.VarChar(191)
+  name        String       @db.VarChar(191)
+  memberships Membership[]
+  projects    Project[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Membership {
+  userId      String
+  workspaceId String
+  role        MembershipRole
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+
+  @@id([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model Project {
+  id           String        @id @default(uuid()) @db.VarChar(191)
+  workspaceId  String
+  name         String        @db.VarChar(191)
+  description  String        @db.Text
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  collections  Collection[]
+  environments Environment[]
+  requests     Request[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([workspaceId])
+}
+
+model Collection {
+  id                 String       @id @default(uuid()) @db.VarChar(191)
+  projectId          String
+  name               String       @db.VarChar(191)
+  parentCollectionId String?      @db.VarChar(191)
+  project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentCollection   Collection?  @relation("CollectionTree", fields: [parentCollectionId], references: [id], onDelete: SetNull)
+  childCollections   Collection[] @relation("CollectionTree")
+  requests           Request[]
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([projectId])
+  @@index([parentCollectionId])
+}
+
+model Environment {
+  id        String        @id @default(uuid()) @db.VarChar(191)
+  projectId String
+  scope     VariableScope
+  name      String        @db.VarChar(191)
+  variables Json
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([projectId])
+}
+
+model Request {
+  id                 String      @id @default(uuid()) @db.VarChar(191)
+  projectId          String
+  collectionId       String?     @db.VarChar(191)
+  name               String      @db.VarChar(191)
+  method             HttpMethod
+  url                String      @db.Text
+  headers            Json
+  queryParams        Json
+  bodyType           String      @db.VarChar(50)
+  body               String      @db.LongText
+  formData           Json
+  postResponseScript String      @db.LongText
+  project            Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  collection         Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([projectId])
+  @@index([collectionId])
+}
+
+model SessionToken {
+  id        String   @id @default(uuid()) @db.VarChar(191)
+  tokenHash String   @unique @db.VarChar(255)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model UserPreference {
+  userId            String   @id @db.VarChar(191)
+  sidebarCollapsed  Boolean  @default(false)
+  themeMode         String   @default("system") @db.VarChar(20)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}

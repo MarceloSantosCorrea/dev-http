@@ -1,0 +1,21 @@
+[Unit]
+Description=DevHttp Web
+After=network.target devhttp-api.service
+Wants=devhttp-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=__NPM_BIN__ run start --workspace @devhttp/web -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

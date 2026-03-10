@@ -1,0 +1,32 @@
+{
+  "name": "dev-http",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @devhttp/web",
+    "dev:api": "npm run start:dev --workspace @devhttp/api",
+    "dev:desktop": "npm run dev --workspace @devhttp/desktop",
+    "build:desktop": "npm run build --workspace @devhttp/desktop",
+    "dist:desktop": "npm run dist --workspace @devhttp/desktop",
+    "dist:desktop:win": "npm run dist:win --workspace @devhttp/desktop",
+    "dist:desktop:mac": "npm run dist:mac --workspace @devhttp/desktop",
+    "dist:desktop:linux": "npm run dist:linux --workspace @devhttp/desktop",
+    "db:up": "docker compose up -d mysql",
+    "db:down": "docker compose down",
+    "db:generate": "npm run prisma:generate --workspace @devhttp/api",
+    "db:migrate": "npm run prisma:migrate --workspace @devhttp/api",
+    "db:deploy": "npm run prisma:migrate:deploy --workspace @devhttp/api",
+    "db:seed": "npm run prisma:seed --workspace @devhttp/api",
+    "db:studio": "npm run prisma:studio --workspace @devhttp/api",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

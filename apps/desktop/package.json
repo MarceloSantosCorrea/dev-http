@@ -1,0 +1,51 @@
+{
+  "name": "@devhttp/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "productName": "DevHttp",
+  "description": "Shell desktop do DevHttp baseado em Electron.",
+  "author": "Marcelo Correa",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "node --check main.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "37.10.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.marcelosantoscorrea.devhttp",
+    "productName": "DevHttp",
+    "asar": true,
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
+}

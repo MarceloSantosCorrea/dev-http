@@ -1,0 +1,21 @@
+[Unit]
+Description=DevHttp API
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
+Environment=NODE_ENV=production
+Environment=PORT=4000
+ExecStart=__NPM_BIN__ run start --workspace @devhttp/api
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,201 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Legacy vars (theme-independent) */
+:root {
+  --warn: #ff8c69;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  --radius: 0.5rem;
+}
+
+/* Dark theme tokens */
+html.dark {
+  color-scheme: dark;
+  --panel-strong: rgba(14, 30, 50, 0.95);
+  --background: oklch(0.13 0.03 250);
+  --foreground: oklch(0.95 0.01 230);
+  --card: oklch(0.13 0.03 250 / 80%);
+  --card-foreground: oklch(0.95 0.01 230);
+  --popover: oklch(0.15 0.03 250);
+  --popover-foreground: oklch(0.95 0.01 230);
+  --primary: oklch(0.78 0.10 190);
+  --primary-foreground: oklch(0.12 0.04 190);
+  --secondary: oklch(0.18 0.025 240);
+  --secondary-foreground: oklch(0.95 0.01 230);
+  --muted: oklch(0.18 0.025 240);
+  --muted-foreground: oklch(0.67 0.04 230);
+  --accent: oklch(0.22 0.025 240);
+  --accent-foreground: oklch(0.95 0.01 230);
+  --destructive: oklch(0.65 0.18 22);
+  --border: oklch(0.72 0.06 240 / 20%);
+  --input: oklch(0.72 0.06 240 / 20%);
+  --ring: oklch(0.78 0.10 190);
+  --sidebar: oklch(0.10 0.025 250 / 58%);
+  --sidebar-foreground: oklch(0.95 0.01 230);
+  --sidebar-primary: oklch(0.78 0.10 190);
+  --sidebar-primary-foreground: oklch(0.12 0.04 190);
+  --sidebar-accent: oklch(0.18 0.025 240);
+  --sidebar-accent-foreground: oklch(0.95 0.01 230);
+  --sidebar-border: oklch(0.72 0.06 240 / 20%);
+  --sidebar-ring: oklch(0.78 0.10 190);
+  --body-gradient:
+    radial-gradient(circle at top left, rgba(79, 209, 197, 0.18), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(255, 140, 105, 0.14), transparent 30%),
+    linear-gradient(160deg, #07101c 0%, #0d1828 45%, #0c1624 100%);
+}
+
+/* Light theme tokens */
+html:not(.dark) {
+  color-scheme: light;
+  --panel-strong: oklch(0.93 0.01 230 / 90%);
+  --background: oklch(0.97 0.01 230);
+  --foreground: oklch(0.15 0.03 250);
+  --card: oklch(1.0 0.0 0 / 80%);
+  --card-foreground: oklch(0.15 0.03 250);
+  --popover: oklch(0.99 0.005 230);
+  --popover-foreground: oklch(0.15 0.03 250);
+  --primary: oklch(0.55 0.12 190);
+  --primary-foreground: oklch(0.97 0.01 230);
+  --secondary: oklch(0.93 0.01 230);
+  --secondary-foreground: oklch(0.15 0.03 250);
+  --muted: oklch(0.93 0.01 230);
+  --muted-foreground: oklch(0.48 0.04 230);
+  --accent: oklch(0.90 0.02 230);
+  --accent-foreground: oklch(0.15 0.03 250);
+  --destructive: oklch(0.58 0.20 22);
+  --border: oklch(0.55 0.06 240 / 25%);
+  --input: oklch(0.55 0.06 240 / 20%);
+  --ring: oklch(0.55 0.12 190);
+  --sidebar: oklch(0.95 0.01 230 / 80%);
+  --sidebar-foreground: oklch(0.15 0.03 250);
+  --sidebar-primary: oklch(0.55 0.12 190);
+  --sidebar-primary-foreground: oklch(0.97 0.01 230);
+  --sidebar-accent: oklch(0.90 0.02 230);
+  --sidebar-accent-foreground: oklch(0.15 0.03 250);
+  --sidebar-border: oklch(0.55 0.06 240 / 20%);
+  --sidebar-ring: oklch(0.55 0.12 190);
+  --body-gradient:
+    radial-gradient(circle at top left, rgba(79, 209, 197, 0.10), transparent 40%),
+    radial-gradient(circle at bottom right, rgba(255, 140, 105, 0.08), transparent 35%),
+    linear-gradient(160deg, #f0f6ff 0%, #e8f2ff 50%, #eef4ff 100%);
+}
+
+/* Gradient body background */
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--body-gradient);
+  font-family: var(--font-heading), sans-serif;
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* Font inheritance for form elements */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* Mono font for code areas */
+textarea,
+pre {
+  font-family: var(--font-mono), monospace;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* Method pills in request list */
+.method-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5rem;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.68rem;
+  font-family: var(--font-mono), monospace;
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.method-pill.get { color: #8cf5c6; }
+.method-pill.post { color: #8fc8ff; }
+.method-pill.put,
+.method-pill.patch { color: #ffe28f; }
+.method-pill.delete { color: #ff9b9b; }
+
+/* Hidden file input inside upload label */
+.upload-button input {
+  display: none;
+}
+
+/* Response body pre block */
+pre {
+  overflow: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1rem;
+  min-height: 200px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+@theme inline {
+  --font-sans: var(--font-heading);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply text-foreground;
+  }
+}
