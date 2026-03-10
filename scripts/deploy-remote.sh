@@ -9,6 +9,23 @@ REPO_URL="${REPO_URL:-}"
 SEED_IF_EMPTY="${SEED_IF_EMPTY:-0}"
 NPM_BIN="${NPM_BIN:-$(command -v npm)}"
 
+wait_for_http() {
+  local url="$1"
+  local attempts="${2:-30}"
+  local sleep_seconds="${3:-1}"
+  local attempt
+
+  for attempt in $(seq 1 "$attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null; then
+      return 0
+    fi
+    sleep "$sleep_seconds"
+  done
+
+  echo "Serviço não respondeu a tempo em: $url"
+  return 1
+}
+
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -24,6 +41,11 @@ fi
 mkdir -p "$(dirname "$APP_DIR")"
 
 if [[ ! -d "$APP_DIR/.git" ]]; then
+  if [[ -d "$APP_DIR" ]] && find "$APP_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "O diretório de deploy já existe e não é um checkout git: $APP_DIR"
+    echo "Execute o bootstrap inicial do repositório antes de usar o deploy automático."
+    exit 1
+  fi
   git clone --branch "$DEPLOY_BRANCH" "$REPO_URL" "$APP_DIR"
 fi
 
@@ -60,7 +82,7 @@ sudo systemctl restart devhttp-web.service
 sudo systemctl is-active --quiet devhttp-api.service
 sudo systemctl is-active --quiet devhttp-web.service
 
-curl --fail --silent --show-error http://127.0.0.1:4000/health >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:3000 >/dev/null
+wait_for_http http://127.0.0.1:4000/health
+wait_for_http http://127.0.0.1:3000
 
 echo "Deploy concluído com sucesso."
