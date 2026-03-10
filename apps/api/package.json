@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prebuild": "npm run prisma:generate",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "start:dev": "tsx watch src/main.ts",
+    "prelint": "npm run prisma:generate",
     "lint": "tsc --noEmit",
     "test": "node --test --import tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
