@@ -151,6 +151,18 @@ textarea {
 .method-pill.patch { color: #ffe28f; }
 .method-pill.delete { color: #ff9b9b; }
 
+/* Variable highlight spans inside contenteditable */
+[data-var-resolved="true"]  { color: var(--primary); font-weight: 500; }
+[data-var-resolved="empty"] { color: var(--warn);    font-weight: 500; }
+[data-var-resolved="false"] { color: var(--warn);    font-weight: 500; }
+
+/* Placeholder via pseudo-element for contenteditable */
+.var-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
 /* Hidden file input inside upload label */
 .upload-button input {
   display: none;

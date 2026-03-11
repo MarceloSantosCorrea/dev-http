@@ -41,6 +41,7 @@ import { toast } from "sonner";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
 const DESKTOP_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
+const AGENT_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
 
 type BootstrapCollection = {
   id: string;
@@ -106,11 +107,50 @@ type PostmanEnvironmentFile = {
   values?: unknown[];
 };
 
+type ResponseCardError = {
+  type: "agent_required";
+  message: string;
+};
+
+type DesktopRequestTabSnapshot = {
+  type: "request";
+  tabId: string;
+  draft: BootstrapRequest;
+  savedSnapshot: string;
+  isDirty: boolean;
+};
+
+type DesktopEnvironmentTabSnapshot = {
+  type: "environment";
+  tabId: string;
+  environmentId: string;
+};
+
+type DesktopWorkspaceSnapshot = {
+  schemaVersion: 1;
+  userId: string;
+  workspaceId: string;
+  selectedProjectId: string;
+  selectedCollectionId: string;
+  selectedEnvironmentId: string;
+  activeTabId: string;
+  activeTab: "headers" | "queryParams" | "body" | "script";
+  openTabs: Array<DesktopRequestTabSnapshot | DesktopEnvironmentTabSnapshot>;
+  expandedCollectionIds: string[];
+  sidebarCollapsed: boolean;
+  sidebarWidth: number;
+  requestPaneRatio: number;
+  responseView: "response" | "console";
+  environmentDrafts: Environment[];
+  savedEnvironmentSnapshot: string;
+};
+
 type RequestEditorTab = {
   tabId: string;
   type: "request";
   draft: BootstrapRequest;
   execution: ExecutionResponse | null;
+  responseError: ResponseCardError | null;
   isExecuting: boolean;
   isSaving: boolean;
   isDirty: boolean;
@@ -134,7 +174,24 @@ type RenameModalState = {
   currentName: string;
 } | null;
 
+type WorkspaceUiState = {
+  selectedProjectId: string;
+  selectedCollectionId: string;
+  selectedEnvironmentId: string;
+  openTabs: EditorTab[];
+  activeTabId: string;
+  expandedCollectionIds: string[];
+  activeTab: "headers" | "queryParams" | "body" | "script";
+  sidebarCollapsed?: boolean;
+  sidebarWidth?: number;
+  requestPaneRatio?: number;
+  responseView?: "response" | "console";
+  bootstrap: BootstrapResponse;
+  savedEnvironmentSnapshot: string;
+};
+
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+const DESKTOP_SNAPSHOT_SCHEMA_VERSION = 1;
 
 function emptyKeyValue(): KeyValue {
   return {
@@ -215,13 +272,16 @@ function serializeRequestSnapshot(draft: BootstrapRequest) {
 
 function createRequestEditorTab(
   draft: BootstrapRequest,
-  overrides: Partial<Pick<RequestEditorTab, "tabId" | "execution" | "isExecuting" | "isSaving">> = {},
+  overrides: Partial<
+    Pick<RequestEditorTab, "tabId" | "execution" | "responseError" | "isExecuting" | "isSaving">
+  > = {},
 ): RequestEditorTab {
   return {
     tabId: overrides.tabId ?? draft.id,
     type: "request",
     draft,
     execution: overrides.execution ?? null,
+    responseError: overrides.responseError ?? null,
     isExecuting: overrides.isExecuting ?? false,
     isSaving: overrides.isSaving ?? false,
     isDirty: false,
@@ -241,11 +301,661 @@ function updateSerializedRequestSnapshotName(snapshot: string, name: string) {
   }
 }
 
+function hasDesktopSnapshotBridge() {
+  if (typeof window === "undefined" || !window.devHttpDesktop) {
+    return false;
+  }
+
+  return (
+    typeof window.devHttpDesktop.getWorkspaceSnapshot === "function" &&
+    typeof window.devHttpDesktop.saveWorkspaceSnapshot === "function" &&
+    typeof window.devHttpDesktop.clearWorkspaceSnapshot === "function"
+  );
+}
+
+function getBrowserWorkspaceSnapshotKey(userId: string, workspaceId: string) {
+  return `devhttp-workspace-snapshot:${userId}:${workspaceId}`;
+}
+
+function readBrowserWorkspaceSnapshot(
+  userId: string,
+  workspaceId: string,
+): DesktopWorkspaceSnapshot | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getBrowserWorkspaceSnapshotKey(userId, workspaceId));
+    return raw ? (JSON.parse(raw) as DesktopWorkspaceSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveBrowserWorkspaceSnapshot(
+  userId: string,
+  workspaceId: string,
+  snapshot: DesktopWorkspaceSnapshot,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(
+    getBrowserWorkspaceSnapshotKey(userId, workspaceId),
+    JSON.stringify(snapshot),
+  );
+}
+
+function buildDefaultWorkspaceUiState(bootstrap: BootstrapResponse): WorkspaceUiState {
+  const firstProject = bootstrap.projects[0] ?? null;
+  const firstRequest = firstProject?.requests[0] ?? null;
+  const firstEnvironment = firstProject?.environments[0] ?? null;
+  const firstCollectionId = firstRequest?.collectionId ?? firstProject?.collections[0]?.id ?? "";
+
+  const openTabs: EditorTab[] = firstRequest ? [createRequestEditorTab(firstRequest)] : [];
+
+  return {
+    selectedProjectId: firstProject?.id ?? "",
+    selectedCollectionId: firstCollectionId,
+    selectedEnvironmentId: firstEnvironment?.id ?? "",
+    openTabs,
+    activeTabId: openTabs[0]?.tabId ?? "",
+    expandedCollectionIds: firstCollectionId ? [firstCollectionId] : [],
+    activeTab: "headers",
+    bootstrap,
+    savedEnvironmentSnapshot: firstEnvironment ? JSON.stringify(firstEnvironment) : "",
+  };
+}
+
+function mergeEnvironmentDrafts(
+  bootstrap: BootstrapResponse,
+  environmentDrafts: Environment[],
+): BootstrapResponse {
+  if (environmentDrafts.length === 0) {
+    return bootstrap;
+  }
+
+  const draftsById = new Map(environmentDrafts.map((environment) => [environment.id, environment]));
+  return {
+    ...bootstrap,
+    projects: bootstrap.projects.map((project) => ({
+      ...project,
+      environments: project.environments.map(
+        (environment) => draftsById.get(environment.id) ?? environment,
+      ),
+    })),
+  };
+}
+
+function resolveRestoredRequestDraft(
+  bootstrap: BootstrapResponse,
+  draft: BootstrapRequest,
+): BootstrapRequest | null {
+  const project =
+    bootstrap.projects.find((item) => item.id === draft.projectId) ??
+    (draft.id
+      ? bootstrap.projects.find((item) => item.requests.some((request) => request.id === draft.id))
+      : null);
+
+  if (!project) {
+    return null;
+  }
+
+  const persistedRequest = draft.id
+    ? project.requests.find((request) => request.id === draft.id) ?? null
+    : null;
+
+  if (draft.id && !persistedRequest) {
+    return null;
+  }
+
+  const fallbackCollectionId =
+    draft.collectionId && project.collections.some((collection) => collection.id === draft.collectionId)
+      ? draft.collectionId
+      : persistedRequest?.collectionId ?? project.collections[0]?.id;
+
+  return {
+    ...(persistedRequest ?? defaultRequest(project.id, fallbackCollectionId)),
+    ...draft,
+    projectId: project.id,
+    collectionId: fallbackCollectionId,
+    updatedAt: persistedRequest?.updatedAt ?? draft.updatedAt,
+  };
+}
+
+function restoreWorkspaceUiState(
+  bootstrap: BootstrapResponse,
+  snapshot: DesktopWorkspaceSnapshot | null,
+): WorkspaceUiState | null {
+  if (
+    !snapshot ||
+    snapshot.schemaVersion !== DESKTOP_SNAPSHOT_SCHEMA_VERSION ||
+    snapshot.workspaceId !== bootstrap.workspace.id
+  ) {
+    return null;
+  }
+
+  const bootstrapWithEnvironmentDrafts = mergeEnvironmentDrafts(
+    bootstrap,
+    snapshot.environmentDrafts ?? [],
+  );
+
+  const restoredTabs: EditorTab[] = snapshot.openTabs.flatMap<EditorTab>((tab) => {
+    if (tab.type === "environment") {
+      const environmentExists = bootstrapWithEnvironmentDrafts.projects.some((project) =>
+        project.environments.some((environment) => environment.id === tab.environmentId),
+      );
+      return environmentExists
+        ? [{ tabId: tab.tabId, type: "environment", environmentId: tab.environmentId }]
+        : [];
+    }
+
+    const draft = resolveRestoredRequestDraft(bootstrapWithEnvironmentDrafts, tab.draft);
+    if (!draft) {
+      return [];
+    }
+
+    const restored = createRequestEditorTab(draft, { tabId: tab.tabId });
+    restored.savedSnapshot = tab.savedSnapshot || serializeRequestSnapshot(draft);
+    restored.isDirty = tab.isDirty || serializeRequestSnapshot(draft) !== restored.savedSnapshot;
+    return [restored];
+  });
+
+  const defaultState = buildDefaultWorkspaceUiState(bootstrapWithEnvironmentDrafts);
+  const selectedProject =
+    bootstrapWithEnvironmentDrafts.projects.find((project) => project.id === snapshot.selectedProjectId) ??
+    (restoredTabs.find((tab): tab is RequestEditorTab => tab.type === "request")
+      ? bootstrapWithEnvironmentDrafts.projects.find(
+          (project) =>
+            project.id ===
+            (restoredTabs.find((tab): tab is RequestEditorTab => tab.type === "request")?.draft.projectId ?? ""),
+        )
+      : null) ??
+    bootstrapWithEnvironmentDrafts.projects[0] ??
+    null;
+
+  if (!selectedProject) {
+    return {
+      ...defaultState,
+      openTabs: restoredTabs,
+      activeTabId: restoredTabs[0]?.tabId ?? "",
+      bootstrap: bootstrapWithEnvironmentDrafts,
+    };
+  }
+
+  const openTabs =
+    snapshot.openTabs.length === 0
+      ? []
+      : restoredTabs.length > 0
+        ? restoredTabs
+        : defaultState.openTabs;
+  const selectedEnvironmentId = selectedProject.environments.some(
+    (environment) => environment.id === snapshot.selectedEnvironmentId,
+  )
+    ? snapshot.selectedEnvironmentId
+    : selectedProject.environments[0]?.id ?? "";
+
+  const activeRequestTab =
+    openTabs.find((tab): tab is RequestEditorTab => tab.tabId === snapshot.activeTabId && tab.type === "request") ??
+    openTabs.find((tab): tab is RequestEditorTab => tab.type === "request") ??
+    null;
+
+  const selectedCollectionId = selectedProject.collections.some(
+    (collection) => collection.id === snapshot.selectedCollectionId,
+  )
+    ? snapshot.selectedCollectionId
+    : activeRequestTab?.draft.collectionId ?? selectedProject.collections[0]?.id ?? "";
+
+  const expandedCollectionIds = snapshot.expandedCollectionIds.filter((id) =>
+    selectedProject.collections.some((collection) => collection.id === id),
+  );
+
+  return {
+    selectedProjectId: selectedProject.id,
+    selectedCollectionId,
+    selectedEnvironmentId,
+    openTabs,
+    activeTabId: openTabs.some((tab) => tab.tabId === snapshot.activeTabId)
+      ? snapshot.activeTabId
+      : openTabs[0]?.tabId ?? "",
+    expandedCollectionIds:
+      expandedCollectionIds.length > 0
+        ? expandedCollectionIds
+        : selectedCollectionId
+          ? [selectedCollectionId]
+          : [],
+    activeTab:
+      snapshot.activeTab === "queryParams" ||
+      snapshot.activeTab === "body" ||
+      snapshot.activeTab === "script"
+        ? snapshot.activeTab
+        : "headers",
+    sidebarCollapsed: snapshot.sidebarCollapsed,
+    sidebarWidth: snapshot.sidebarWidth,
+    requestPaneRatio: snapshot.requestPaneRatio,
+    responseView: snapshot.responseView,
+    bootstrap: bootstrapWithEnvironmentDrafts,
+    savedEnvironmentSnapshot:
+      snapshot.savedEnvironmentSnapshot ||
+      JSON.stringify(
+        selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
+          null,
+      ),
+  };
+}
+
+function buildDesktopWorkspaceSnapshot(
+  userId: string,
+  workspaceId: string,
+  bootstrap: BootstrapResponse,
+  openTabs: EditorTab[],
+  input: Omit<
+    DesktopWorkspaceSnapshot,
+    "schemaVersion" | "userId" | "workspaceId" | "openTabs" | "environmentDrafts"
+  >,
+): DesktopWorkspaceSnapshot {
+  return {
+    schemaVersion: DESKTOP_SNAPSHOT_SCHEMA_VERSION,
+    userId,
+    workspaceId,
+    ...input,
+    environmentDrafts: bootstrap.projects.flatMap((project) => project.environments),
+    openTabs: openTabs.map((tab) =>
+      tab.type === "request"
+        ? {
+            type: "request",
+            tabId: tab.tabId,
+            draft: tab.draft,
+            savedSnapshot: tab.savedSnapshot,
+            isDirty: tab.isDirty,
+          }
+        : {
+            type: "environment",
+            tabId: tab.tabId,
+            environmentId: tab.environmentId,
+          },
+    ),
+  };
+}
+
 function interpolateWithVariables(input: string, variables: Variable[]) {
   const variableMap = new Map(
     variables.filter((variable) => variable.enabled).map((variable) => [variable.key, variable.value]),
   );
   return input.replace(/\{\{([^}]+)\}\}/g, (_, key: string) => variableMap.get(key.trim()) ?? "");
+}
+
+type VarSegment = { type: "text"; text: string } | { type: "var"; name: string; raw: string };
+
+function parseVariableSegments(value: string): VarSegment[] {
+  const segments: VarSegment[] = [];
+  const regex = /\{\{([^}]+)\}\}/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(value)) !== null) {
+    if (match.index > lastIndex)
+      segments.push({ type: "text", text: value.slice(lastIndex, match.index) });
+    segments.push({ type: "var", name: match[1].trim(), raw: match[0] });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < value.length)
+    segments.push({ type: "text", text: value.slice(lastIndex) });
+  return segments;
+}
+
+function escapeHTML(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function buildHighlightHTML(value: string, variables: Variable[]): string {
+  return parseVariableSegments(value)
+    .map((seg) => {
+      if (seg.type === "text") return escapeHTML(seg.text);
+      const resolved = variables.find((v) => v.enabled && v.key === seg.name);
+      const state = !resolved ? "false" : resolved.value ? "true" : "empty";
+      return `<span data-var-name="${escapeHTML(seg.name)}" data-var-resolved="${state}">${escapeHTML(seg.raw)}</span>`;
+    })
+    .join("");
+}
+
+function getCaretOffset(el: HTMLElement): number {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount) return 0;
+  const range = sel.getRangeAt(0).cloneRange();
+  range.selectNodeContents(el);
+  range.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  return range.toString().length;
+}
+
+function setCaretOffset(el: HTMLElement, offset: number): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const s = sel;
+  let rem = offset;
+  function find(node: Node): boolean {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node as Text).length;
+      if (rem <= len) {
+        const r = document.createRange();
+        r.setStart(node, rem);
+        r.collapse(true);
+        s.removeAllRanges();
+        s.addRange(r);
+        return true;
+      }
+      rem -= len;
+      return false;
+    }
+    return Array.from(node.childNodes).some(find);
+  }
+  find(el);
+}
+
+function getAutocompleteTrigger(
+  text: string,
+  caretOffset: number,
+): { query: string; start: number } | null {
+  const before = text.slice(0, caretOffset);
+  const lastOpen = before.lastIndexOf("{{");
+  if (lastOpen === -1) return null;
+  const afterOpen = before.slice(lastOpen + 2);
+  if (afterOpen.includes("}}")) return null;
+  return { query: afterOpen, start: lastOpen };
+}
+
+function VarSuggestionsDropdown({
+  items,
+  activeIndex,
+  top,
+  left,
+  onSelect,
+}: {
+  items: Variable[];
+  activeIndex: number;
+  top: number;
+  left: number;
+  onSelect: (key: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div
+      className="fixed z-[300] min-w-48 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg py-1"
+      style={{ top, left }}
+    >
+      {items.map((v, i) => (
+        <button
+          key={v.key}
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); onSelect(v.key); }}
+          className={cn(
+            "w-full text-left px-3 py-1.5 text-sm flex items-center gap-2",
+            i === activeIndex
+              ? "bg-primary/15 text-primary"
+              : "text-foreground hover:bg-muted/50",
+          )}
+        >
+          <span className="font-medium truncate">{v.key}</span>
+          {v.secret ? (
+            <span className="ml-auto text-xs text-muted-foreground shrink-0">••••</span>
+          ) : (
+            <span className="ml-auto text-xs text-muted-foreground truncate max-w-[6rem]">
+              {v.value || "(vazio)"}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function VarPopover({
+  name, variables, environmentName, top, left, onUpdateVariable, onMouseEnter, onMouseLeave,
+}: {
+  name: string;
+  variables: Variable[];
+  environmentName: string;
+  top: number;
+  left: number;
+  onUpdateVariable?: (name: string, value: string) => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  const resolved = variables.find((v) => v.enabled && v.key === name);
+
+  return (
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className="fixed z-[200] min-w-52 rounded-lg border border-border bg-popover shadow-lg p-3 flex flex-col gap-2"
+      style={{ top, left }}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-xs font-medium text-foreground truncate">{name}</span>
+        {environmentName && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium shrink-0">
+            {environmentName}
+          </span>
+        )}
+      </div>
+      <input
+        type={resolved?.secret ? "password" : "text"}
+        defaultValue={resolved?.value ?? ""}
+        disabled={!resolved || !onUpdateVariable}
+        placeholder={resolved ? "(vazio)" : "variável não encontrada"}
+        onChange={(e) => resolved && onUpdateVariable?.(name, e.target.value)}
+        className={cn(
+          "h-7 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none",
+          "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
+          "disabled:opacity-50 disabled:cursor-not-allowed",
+        )}
+      />
+    </div>
+  );
+}
+
+function VariableHighlightInput({
+  value,
+  onChange,
+  variables,
+  placeholder,
+  className,
+  disabled,
+  onUpdateVariable,
+  environmentName,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  variables: Variable[];
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+  onUpdateVariable?: (name: string, value: string) => void;
+  environmentName?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
+  const [suggestions, setSuggestions] = useState<{
+    items: Variable[];
+    query: string;
+    start: number;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+
+  // Mount initial HTML
+  useEffect(() => {
+    if (ref.current) ref.current.innerHTML = buildHighlightHTML(value, variables);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync external value changes (tab switch, reset)
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if ((el.textContent ?? "") === value) return;
+    el.innerHTML = buildHighlightHTML(value, variables);
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recolor when variables change (env switch)
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const text = el.textContent ?? "";
+    el.innerHTML = buildHighlightHTML(text, variables);
+  }, [variables]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleInput() {
+    const el = ref.current;
+    if (!el) return;
+    const caret = getCaretOffset(el);
+    const text = el.textContent ?? "";
+    onChange(text);
+    el.innerHTML = buildHighlightHTML(text, variables);
+    setCaretOffset(el, caret);
+
+    // Autocomplete
+    const trigger = getAutocompleteTrigger(text, caret);
+    if (trigger && variables.length > 0) {
+      const q = trigger.query.toLowerCase();
+      const items = variables.filter(
+        (v) => v.enabled && v.key.toLowerCase().includes(q),
+      );
+      if (items.length > 0) {
+        const sel = window.getSelection();
+        let top = el.getBoundingClientRect().bottom + 4;
+        let left = el.getBoundingClientRect().left;
+        if (sel?.rangeCount) {
+          const r = sel.getRangeAt(0).getBoundingClientRect();
+          if (r.height > 0) { top = r.bottom + 4; left = r.left; }
+        }
+        setSuggestions({ items, query: trigger.query, start: trigger.start, top, left });
+        setActiveSuggestionIndex(0);
+        return;
+      }
+    }
+    setSuggestions(null);
+  }
+
+  function selectSuggestion(key: string) {
+    const el = ref.current;
+    if (!el || !suggestions) return;
+    const text = el.textContent ?? "";
+    const caret = getCaretOffset(el);
+    const newText =
+      text.slice(0, suggestions.start) + `{{${key}}}` + text.slice(caret);
+    const newCaret = suggestions.start + key.length + 4;
+    onChange(newText);
+    el.innerHTML = buildHighlightHTML(newText, variables);
+    setCaretOffset(el, newCaret);
+    setSuggestions(null);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") e.preventDefault();
+
+    if (suggestions) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveSuggestionIndex((i) => Math.min(i + 1, suggestions.items.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveSuggestionIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const item = suggestions.items[activeSuggestionIndex];
+        if (item) selectSuggestion(item.key);
+        return;
+      }
+      if (e.key === "Escape") {
+        setSuggestions(null);
+        return;
+      }
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    e.preventDefault();
+    const text = e.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, text);
+  }
+
+  function openPopover(name: string, rect: DOMRect) {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setPopover({ name, top: rect.bottom + 4, left: rect.left });
+  }
+
+  function scheduleClose() {
+    closeTimer.current = setTimeout(() => setPopover(null), 120);
+  }
+
+  function cancelClose() {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement;
+    const name = target.dataset.varName;
+    if (name) {
+      const r = target.getBoundingClientRect();
+      openPopover(name, r);
+    }
+  }
+
+  return (
+    <>
+      <div
+        ref={ref}
+        contentEditable={!disabled}
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => scheduleClose()}
+        onBlur={() => setSuggestions(null)}
+        className={cn(
+          "var-input h-8 w-full rounded-lg border border-input bg-transparent dark:bg-input/30 px-2.5",
+          "text-base md:text-sm outline-none",
+          "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+          "whitespace-nowrap overflow-x-auto",
+          "flex items-center",
+          disabled && "opacity-50 pointer-events-none cursor-not-allowed",
+          className,
+        )}
+      />
+      {suggestions && createPortal(
+        <VarSuggestionsDropdown
+          items={suggestions.items}
+          activeIndex={activeSuggestionIndex}
+          top={suggestions.top}
+          left={suggestions.left}
+          onSelect={selectSuggestion}
+        />,
+        document.body,
+      )}
+      {popover && createPortal(
+        <VarPopover
+          name={popover.name}
+          variables={variables}
+          environmentName={environmentName ?? ""}
+          top={popover.top}
+          left={popover.left}
+          onUpdateVariable={onUpdateVariable}
+          onMouseEnter={cancelClose}
+          onMouseLeave={() => setPopover(null)}
+        />,
+        document.body,
+      )}
+    </>
+  );
 }
 
 function isPrivateHostname(hostname: string) {
@@ -493,7 +1203,9 @@ export function DevHttpClient() {
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [collectionMenu, setCollectionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [feedback, setFeedback] = useState("");
-  const [hasDesktopBridge, setHasDesktopBridge] = useState(false);
+  const [hasDesktopBridge, setHasDesktopBridge] = useState(
+    () => typeof window !== "undefined" && Boolean(window.devHttpDesktop?.executeLocalRequest),
+  );
   const [hasLocalAgent, setHasLocalAgent] = useState(false);
   const [localAgentToken, setLocalAgentToken] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -554,6 +1266,9 @@ export function DevHttpClient() {
   const newMenuRef = useRef<HTMLDivElement | null>(null);
   const newMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const editorNewMenuRef = useRef<HTMLDivElement | null>(null);
+  const skipNextProjectResetRef = useRef(false);
+  const desktopSnapshotReadyRef = useRef(false);
+  const desktopSnapshotSaveTimeoutRef = useRef<number | null>(null);
 
   const selectedProject = useMemo(
     () => bootstrap?.projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -605,6 +1320,8 @@ export function DevHttpClient() {
 
   const execution: ExecutionResponse | null =
     activeEditorTab?.type === "request" ? activeEditorTab.execution : null;
+  const responseError =
+    activeEditorTab?.type === "request" ? activeEditorTab.responseError : null;
   const isExecuting =
     activeEditorTab?.type === "request" ? activeEditorTab.isExecuting : false;
   const isSaving =
@@ -698,42 +1415,29 @@ export function DevHttpClient() {
   useEffect(() => {
     if (!auth) {
       setBootstrap(null);
+      desktopSnapshotReadyRef.current = false;
       return;
     }
 
+    desktopSnapshotReadyRef.current = false;
     setIsSessionLoading(true);
     startTransition(async () => {
       try {
-        const nextBootstrap = normalizeBootstrap(
+        let nextBootstrap = normalizeBootstrap(
           await requestJson<BootstrapResponse>(`/workspaces/${auth.workspaceId}/bootstrap`, {
             headers: authHeaders(auth.token),
           }),
         );
         setBootstrap(nextBootstrap);
 
-        const firstProject = nextBootstrap.projects[0];
-        const firstRequest = firstProject?.requests[0];
-        const firstEnvironment = firstProject?.environments[0];
-        const firstCollectionId = firstRequest?.collectionId ?? firstProject?.collections[0]?.id ?? "";
-
-        setSelectedProjectId(firstProject?.id ?? "");
-        setSelectedCollectionId(firstCollectionId);
-        setSelectedEnvironmentId(firstEnvironment?.id ?? "");
-        setExpandedCollectionIds(firstCollectionId ? [firstCollectionId] : []);
-
-        const tabs: EditorTab[] = [];
-        if (firstRequest) {
-          tabs.push(createRequestEditorTab(firstRequest));
-        }
-        setOpenTabs(tabs);
-        setActiveTabId(tabs[0]?.tabId ?? "");
-        setIsSessionLoading(false);
-
+        const defaultUiState = buildDefaultWorkspaceUiState(nextBootstrap);
+        let nextSidebarCollapsed = false;
         try {
           const prefs = await requestJson<UserPreferences>("/preferences", {
             headers: authHeaders(auth.token),
           });
-          setSidebarCollapsed(prefs.sidebarCollapsed ?? false);
+          nextSidebarCollapsed = prefs.sidebarCollapsed ?? false;
+          setSidebarCollapsed(nextSidebarCollapsed);
           const nextThemeMode = prefs.themeMode ?? "system";
           setThemeMode(nextThemeMode);
           setSavedThemeMode(nextThemeMode);
@@ -741,13 +1445,48 @@ export function DevHttpClient() {
         } catch {
           // noop
         }
+
+        let nextUiState = defaultUiState;
+        let nextSidebarWidth = 320;
+
+        const snapshot = hasDesktopSnapshotBridge()
+          ? ((await window.devHttpDesktop!.getWorkspaceSnapshot(
+              auth.user.id,
+            )) as DesktopWorkspaceSnapshot | null)
+          : readBrowserWorkspaceSnapshot(auth.user.id, auth.workspaceId);
+
+        if (snapshot) {
+          const restoredUiState = restoreWorkspaceUiState(nextBootstrap, snapshot);
+          if (restoredUiState) {
+            nextUiState = restoredUiState;
+            nextBootstrap = restoredUiState.bootstrap;
+            setBootstrap(restoredUiState.bootstrap);
+            nextSidebarCollapsed = restoredUiState.sidebarCollapsed ?? nextSidebarCollapsed;
+            nextSidebarWidth = restoredUiState.sidebarWidth ?? nextSidebarWidth;
+          }
+        }
+
+        skipNextProjectResetRef.current = true;
+        setSelectedProjectId(nextUiState.selectedProjectId);
+        setSelectedCollectionId(nextUiState.selectedCollectionId);
+        setSelectedEnvironmentId(nextUiState.selectedEnvironmentId);
+        setExpandedCollectionIds(nextUiState.expandedCollectionIds);
+        setOpenTabs(nextUiState.openTabs);
+        setActiveTabId(nextUiState.activeTabId);
+        setActiveTab(nextUiState.activeTab);
+        setSidebarCollapsed(nextSidebarCollapsed);
+        setSidebarWidth(nextSidebarWidth);
+        setRequestPaneRatio(nextUiState.requestPaneRatio ?? 0.58);
+        setResponseView(nextUiState.responseView ?? "response");
+        setSavedEnvironmentSnapshot(nextUiState.savedEnvironmentSnapshot);
+        desktopSnapshotReadyRef.current = true;
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "Falha ao carregar workspace.");
       } finally {
         setIsSessionLoading(false);
       }
     });
-  }, [auth]);
+  }, [auth, hasDesktopBridge]);
 
   useEffect(() => {
     if (!auth) {
@@ -801,6 +1540,10 @@ export function DevHttpClient() {
 
   useEffect(() => {
     if (!selectedProject) return;
+    if (skipNextProjectResetRef.current) {
+      skipNextProjectResetRef.current = false;
+      return;
+    }
     const firstRequest = selectedProject.requests[0];
     const tabs: EditorTab[] = firstRequest
       ? [createRequestEditorTab(firstRequest)]
@@ -808,6 +1551,60 @@ export function DevHttpClient() {
     setOpenTabs(tabs);
     setActiveTabId(tabs[0]?.tabId ?? "");
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!auth || !bootstrap || !desktopSnapshotReadyRef.current) {
+      return;
+    }
+
+    if (desktopSnapshotSaveTimeoutRef.current) {
+      window.clearTimeout(desktopSnapshotSaveTimeoutRef.current);
+    }
+
+    const snapshot = buildDesktopWorkspaceSnapshot(auth.user.id, bootstrap.workspace.id, bootstrap, openTabs, {
+      selectedProjectId,
+      selectedCollectionId,
+      selectedEnvironmentId,
+      activeTabId,
+      activeTab,
+      expandedCollectionIds,
+      sidebarCollapsed,
+      sidebarWidth,
+      requestPaneRatio,
+      responseView,
+      savedEnvironmentSnapshot,
+    });
+
+    desktopSnapshotSaveTimeoutRef.current = window.setTimeout(() => {
+      if (hasDesktopSnapshotBridge()) {
+        void window.devHttpDesktop!.saveWorkspaceSnapshot(auth.user.id, snapshot);
+        return;
+      }
+
+      saveBrowserWorkspaceSnapshot(auth.user.id, bootstrap.workspace.id, snapshot);
+    }, 250);
+
+    return () => {
+      if (desktopSnapshotSaveTimeoutRef.current) {
+        window.clearTimeout(desktopSnapshotSaveTimeoutRef.current);
+      }
+    };
+  }, [
+    activeTabId,
+    auth,
+    bootstrap,
+    expandedCollectionIds,
+    openTabs,
+    activeTab,
+    requestPaneRatio,
+    responseView,
+    savedEnvironmentSnapshot,
+    selectedCollectionId,
+    selectedEnvironmentId,
+    selectedProjectId,
+    sidebarCollapsed,
+    sidebarWidth,
+  ]);
 
   useEffect(() => {
     if (!collectionMenu) return;
@@ -1114,7 +1911,7 @@ export function DevHttpClient() {
     try {
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
-          ? { ...tab, execution: null, isExecuting: true }
+          ? { ...tab, execution: null, responseError: null, isExecuting: true }
           : tab,
       ));
       const payload = buildExecutionPayload();
@@ -1161,7 +1958,7 @@ export function DevHttpClient() {
 
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
-          ? { ...tab, execution: result, isExecuting: false }
+          ? { ...tab, execution: result, responseError: null, isExecuting: false }
           : tab,
       ));
       toast.success(
@@ -1176,9 +1973,27 @@ export function DevHttpClient() {
         setHasLocalAgent(false);
         setLocalAgentToken("");
       }
+
+      if (error instanceof Error && error.message === LOCAL_AGENT_REQUIRED_MESSAGE) {
+        setOpenTabs((prev) => prev.map((tab) =>
+          tab.tabId === activeTabId && tab.type === "request"
+            ? {
+                ...tab,
+                execution: null,
+                responseError: {
+                  type: "agent_required",
+                  message: error.message,
+                },
+                isExecuting: false,
+              }
+            : tab,
+        ));
+        return;
+      }
+
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
-          ? { ...tab, execution: null, isExecuting: false }
+          ? { ...tab, execution: null, responseError: null, isExecuting: false }
           : tab,
       ));
       toast.error(error instanceof Error ? error.message : "Falha ao executar request.");
@@ -3081,9 +3896,19 @@ export function DevHttpClient() {
                         </option>
                       ))}
                     </select>
-                    <Input
+                    <VariableHighlightInput
                       value={draftRequest.url}
-                      onChange={(event) => updateDraft("url", event.target.value)}
+                      onChange={(val) => updateDraft("url", val)}
+                      variables={selectedEnvironment?.variables ?? []}
+                      environmentName={selectedEnvironment?.name}
+                      onUpdateVariable={(name, val) =>
+                        updateEnvironmentState((env) => ({
+                          ...env,
+                          variables: env.variables.map((v) =>
+                            v.key === name ? { ...v, value: val } : v,
+                          ),
+                        }))
+                      }
                       placeholder="https://api.exemplo.com/resource"
                       className="flex-1"
                     />
@@ -3127,6 +3952,16 @@ export function DevHttpClient() {
                         rows={draftRequest.headers}
                         onChange={(rowId, key, value) => updateKeyValue("headers", rowId, key, value)}
                         onRemove={(rowId) => removeRow("headers", rowId)}
+                        variables={selectedEnvironment?.variables ?? []}
+                        environmentName={selectedEnvironment?.name}
+                        onUpdateVariable={(name, val) =>
+                          updateEnvironmentState((env) => ({
+                            ...env,
+                            variables: env.variables.map((v) =>
+                              v.key === name ? { ...v, value: val } : v,
+                            ),
+                          }))
+                        }
                       />
                     </TabsContent>
 
@@ -3145,6 +3980,16 @@ export function DevHttpClient() {
                           updateKeyValue("queryParams", rowId, key, value)
                         }
                         onRemove={(rowId) => removeRow("queryParams", rowId)}
+                        variables={selectedEnvironment?.variables ?? []}
+                        environmentName={selectedEnvironment?.name}
+                        onUpdateVariable={(name, val) =>
+                          updateEnvironmentState((env) => ({
+                            ...env,
+                            variables: env.variables.map((v) =>
+                              v.key === name ? { ...v, value: val } : v,
+                            ),
+                          }))
+                        }
                       />
                     </TabsContent>
 
@@ -3307,6 +4152,41 @@ export function DevHttpClient() {
                               ) : null}
                             </div>
                           ) : null}
+                        </div>
+                      ) : responseError?.type === "agent_required" ? (
+                        <div className="grid gap-4">
+                          <div className="grid gap-1.5">
+                            <p className="text-sm font-medium text-foreground">
+                              Destino local detectado
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {responseError.message}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              Para executar requests para localhost e rede privada no navegador,
+                              instale o DevHttp Agent ou use o DevHttp Desktop.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-3">
+                            <a
+                              href={AGENT_DOWNLOAD_URL}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={buttonVariants({ variant: "default" })}
+                            >
+                              <ExternalLink className="size-4" />
+                              Baixar DevHttp Agent
+                            </a>
+                            <a
+                              href={DESKTOP_DOWNLOAD_URL}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={buttonVariants({ variant: "outline" })}
+                            >
+                              <ExternalLink className="size-4" />
+                              Baixar DevHttp Desktop
+                            </a>
+                          </div>
                         </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">
@@ -3618,23 +4498,35 @@ function KeyValueEditor({
   rows,
   onChange,
   onRemove,
+  variables = [],
+  onUpdateVariable,
+  environmentName,
 }: {
   rows: KeyValue[];
   onChange: (rowId: string, key: keyof KeyValue, value: string | boolean) => void;
   onRemove: (rowId: string) => void;
+  variables?: Variable[];
+  onUpdateVariable?: (name: string, value: string) => void;
+  environmentName?: string;
 }) {
   return (
     <div className="grid gap-2">
       {rows.map((row) => (
         <div key={row.id} className="grid grid-cols-[1fr_1.5fr_auto_auto] gap-2 items-center max-[720px]:grid-cols-1">
-          <Input
+          <VariableHighlightInput
             value={row.key}
-            onChange={(event) => onChange(row.id, "key", event.target.value)}
+            onChange={(val) => onChange(row.id, "key", val)}
+            variables={variables}
+            environmentName={environmentName}
+            onUpdateVariable={onUpdateVariable}
             placeholder="Chave"
           />
-          <Input
+          <VariableHighlightInput
             value={row.value}
-            onChange={(event) => onChange(row.id, "value", event.target.value)}
+            onChange={(val) => onChange(row.id, "value", val)}
+            variables={variables}
+            environmentName={environmentName}
+            onUpdateVariable={onUpdateVariable}
             placeholder="Valor"
           />
           <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground cursor-pointer select-none">
@@ -3744,7 +4636,7 @@ function VariableEditor({
     <div className="grid gap-2">
       {variables.map((variable, index) => (
         <div
-          key={`${variable.key}-${index}`}
+          key={index}
           className="grid grid-cols-[1fr_1.5fr_auto] gap-2 items-center max-[720px]:grid-cols-1"
         >
           <Input
@@ -4596,7 +5488,7 @@ function ExecutionConsoleViewer({ consoleData }: { consoleData: ExecutionConsole
         {consoleData.requestLine}
       </div>
 
-      <div className="grid gap-0 rounded-lg border border-border/40 bg-black/30 py-2 font-mono text-xs overflow-hidden">
+      <div className="grid gap-0 rounded-lg border border-border/40 bg-muted/40 py-2 font-mono text-xs overflow-hidden">
         {Object.entries(consoleData.sections).map(([label, value]) => (
           <ConsoleNode key={label} label={label} value={value} depth={0} defaultExpanded />
         ))}
@@ -4629,7 +5521,7 @@ function ConsoleNode({
       return (
         <div style={{ marginLeft: `${depth * 14}px` }} className="grid gap-0.5 px-2 py-0.5 font-mono text-xs">
           <span className="text-muted-foreground">{label}:</span>
-          <pre className="pl-2 whitespace-pre-wrap break-words text-green-400/90">{leafValue}</pre>
+          <pre className="pl-2 whitespace-pre-wrap break-words text-green-600 dark:text-green-400/90">{leafValue}</pre>
         </div>
       );
     }
@@ -4689,10 +5581,10 @@ function ConsoleNode({
 }
 
 function consoleValueColor(value: string | number | boolean | null): string {
-  if (value === null) return "text-red-400/70";
-  if (typeof value === "number") return "text-blue-400";
-  if (typeof value === "boolean") return "text-orange-400";
-  if (typeof value === "string") return "text-green-400/90";
+  if (value === null) return "text-red-500/80";
+  if (typeof value === "number") return "text-blue-500";
+  if (typeof value === "boolean") return "text-orange-500";
+  if (typeof value === "string") return "text-green-600 dark:text-green-400/90";
   return "text-foreground";
 }
 
