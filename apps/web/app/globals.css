@@ -213,4 +213,29 @@ pre {
   body {
     @apply text-foreground;
   }
+
+  /* Scrollbar customizada — Chrome/Safari/Edge */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.72 0.06 240 / 25%);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.72 0.06 240 / 45%);
+  }
+
+  /* Scrollbar customizada — Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.72 0.06 240 / 25%) transparent;
+  }
 }
