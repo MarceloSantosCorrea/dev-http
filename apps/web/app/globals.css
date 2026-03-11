@@ -88,6 +88,7 @@ html:not(.dark) {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
+  color-scheme: dark;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2393a5bf' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-position: right 0.625rem center;
   background-repeat: no-repeat;
@@ -96,6 +97,11 @@ html:not(.dark) {
 
 html:not(.dark) .select-custom {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235d6e85' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+
+.select-custom option {
+  background-color: var(--background);
+  color: var(--foreground);
 }
 
 /* Gradient body background */
@@ -112,11 +118,13 @@ body {
 }
 
 /* Font inheritance for form elements */
-button,
-input,
-select,
-textarea {
-  font: inherit;
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
 /* Mono font for code areas */
@@ -145,11 +153,13 @@ textarea {
   flex-shrink: 0;
 }
 
-.method-pill.get { color: #8cf5c6; }
-.method-pill.post { color: #8fc8ff; }
-.method-pill.put,
-.method-pill.patch { color: #ffe28f; }
-.method-pill.delete { color: #ff9b9b; }
+.method-pill.get { color: #247E4C; }
+.method-pill.post { color: #A87D13; }
+.method-pill.put { color: #2552AA; }
+.method-pill.patch { color: #6546AB; }
+.method-pill.delete { color: #9F2F22; }
+.method-pill.head { color: #247E4C; }
+.method-pill.options { color: #B93B85; }
 
 /* Variable highlight spans inside contenteditable */
 [data-var-resolved="true"]  { color: var(--primary); font-weight: 500; }
@@ -173,9 +183,9 @@ pre {
   overflow: auto;
   background: var(--panel-strong);
   border: 1px solid var(--border);
-  border-radius: 1rem;
-  padding: 1rem;
-  min-height: 200px;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  min-height: 0;
   font-family: var(--font-mono), monospace;
   font-size: 0.8rem;
   line-height: 1.6;

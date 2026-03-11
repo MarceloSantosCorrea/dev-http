@@ -11,6 +11,12 @@ const BODY_LIMIT_BYTES = 20 * 1024 * 1024;
 const DEFAULT_ALLOWED_ORIGINS =
   "https://devhttp.marcelocorrea.com.br,http://localhost:3000,http://127.0.0.1:3000";
 
+function createAgentError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function resolveAgentConfig(overrides = {}) {
   return {
     host: overrides.host || process.env.DEVHTTP_AGENT_HOST || DEFAULT_HOST,
@@ -100,6 +106,7 @@ function createAgentServer(overrides = {}) {
     if (!isOriginAllowed(origin)) {
       writeJson(request, response, 403, {
         message: "Origem não autorizada para usar o DevHttp Agent.",
+        code: "ORIGIN_NOT_ALLOWED",
       });
       return;
     }
@@ -127,17 +134,17 @@ function createAgentServer(overrides = {}) {
         : "";
 
     if (!isOriginAllowed(origin)) {
-      throw new Error("Origem não autorizada para usar o DevHttp Agent.");
+      throw createAgentError("Origem não autorizada para usar o DevHttp Agent.", "ORIGIN_NOT_ALLOWED");
     }
 
     if (!token) {
-      throw new Error("Token do DevHttp Agent ausente.");
+      throw createAgentError("Token do DevHttp Agent ausente.", "TOKEN_MISSING");
     }
 
     const session = handshakeTokens.get(token);
     if (!session || session.origin !== origin || session.expiresAt <= Date.now()) {
       handshakeTokens.delete(token);
-      throw new Error("Sessão do DevHttp Agent inválida ou expirada.");
+      throw createAgentError("Sessão do DevHttp Agent inválida ou expirada.", "SESSION_EXPIRED");
     }
   }
 
@@ -151,6 +158,7 @@ function createAgentServer(overrides = {}) {
       if (!isOriginAllowed(getOrigin(request))) {
         writeJson(request, response, 403, {
           message: "Origem não autorizada para usar o DevHttp Agent.",
+          code: "ORIGIN_NOT_ALLOWED",
         });
         return;
       }
@@ -191,6 +199,10 @@ function createAgentServer(overrides = {}) {
             error instanceof Error
               ? error.message
               : "Falha ao executar a request pelo DevHttp Agent.",
+          code:
+            error && typeof error === "object" && "code" in error && typeof error.code === "string"
+              ? error.code
+              : "EXECUTION_FAILED",
         });
       }
       return;

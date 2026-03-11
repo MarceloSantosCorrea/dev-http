@@ -34,7 +34,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { connectLocalAgent, executeLocalAgentRequest, LOCAL_AGENT_REQUIRED_MESSAGE } from "@/lib/local-agent";
+import {
+  connectLocalAgent,
+  executeLocalAgentRequestWithRetry,
+  isLocalAgentRequiredError,
+  LOCAL_AGENT_REQUIRED_MESSAGE,
+} from "@/lib/local-agent";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -1012,10 +1017,15 @@ function getCookieValue(name: string) {
     ?.slice(prefix.length) ?? "";
 }
 
+function isDesktopApiClient() {
+  return typeof window !== "undefined" && Boolean(window.devHttpDesktop);
+}
+
 function authHeaders(_token?: string) {
   const csrfToken = getCookieValue("devhttp_csrf");
   return {
     "content-type": "application/json",
+    ...(isDesktopApiClient() ? { "x-devhttp-client": "desktop" } : {}),
     ...(csrfToken ? { "x-csrf-token": decodeURIComponent(csrfToken) } : {}),
   };
 }
@@ -1031,6 +1041,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     if (csrfToken) {
       headers.set("x-csrf-token", decodeURIComponent(csrfToken));
     }
+  }
+  if (!headers.has("x-devhttp-client") && isDesktopApiClient()) {
+    headers.set("x-devhttp-client", "desktop");
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -1143,6 +1156,232 @@ function isPostmanEnvironmentFile(value: unknown): value is PostmanEnvironmentFi
 
 const selectClass =
   "h-8 rounded-lg border border-input bg-muted/50 pl-2.5 pr-8 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring select-custom";
+
+const METHOD_COLORS: Record<string, string> = {
+  GET: "#247E4C",
+  POST: "#A87D13",
+  PUT: "#2552AA",
+  PATCH: "#6546AB",
+  DELETE: "#9F2F22",
+  HEAD: "#247E4C",
+  OPTIONS: "#B93B85",
+};
+
+function MethodSelect({
+  value,
+  onChange,
+  methods,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  methods: string[];
+  className?: string;
+}) {
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setAnchor(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [anchor]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={cn(
+          "h-8 flex items-center gap-1.5 rounded-lg border border-input bg-muted/50 pl-2.5 pr-2 text-[0.8rem] font-mono font-bold transition-colors focus:outline-none focus:ring-1 focus:ring-ring hover:bg-muted/70 shrink-0",
+          className,
+        )}
+        style={{ color: METHOD_COLORS[value] ?? "inherit" }}
+        onClick={() => {
+          if (anchor) { setAnchor(null); return; }
+          const rect = triggerRef.current!.getBoundingClientRect();
+          setAnchor({ x: rect.left, y: rect.bottom + 4, width: rect.width });
+        }}
+      >
+        <span className="flex-1 text-left">{value}</span>
+        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+      </button>
+      {anchor && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
+          className="rounded-lg border border-border bg-popover p-1 shadow-xl"
+        >
+          {methods.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className="w-full rounded-md px-3 py-1.5 text-left text-[0.8rem] font-mono font-bold hover:bg-muted/60 transition-colors"
+              style={{ color: METHOD_COLORS[m] ?? "inherit" }}
+              onClick={() => { onChange(m); setAnchor(null); }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function WorkspaceSelect({
+  workspaceId,
+  workspaces,
+  onChange,
+  className,
+}: {
+  workspaceId: string;
+  workspaces: WorkspaceMembership[];
+  onChange: (id: string) => void;
+  className?: string;
+}) {
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setAnchor(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [anchor]);
+
+  const selected = workspaces.find((m) => m.workspace.id === workspaceId);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={cn(
+          "h-8 flex items-center gap-1.5 rounded-lg border border-input bg-muted/50 pl-2.5 pr-2 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring hover:bg-muted/70 flex-1",
+          className,
+        )}
+        onClick={() => {
+          if (anchor) { setAnchor(null); return; }
+          const rect = triggerRef.current!.getBoundingClientRect();
+          setAnchor({ x: rect.left, y: rect.bottom + 4, width: rect.width });
+        }}
+      >
+        <span className="flex-1 text-left truncate">{selected?.workspace.name}</span>
+        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+      </button>
+      {anchor && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
+          className="rounded-lg border border-border bg-popover p-1 shadow-xl"
+        >
+          {workspaces.map(({ workspace }) => (
+            <button
+              key={workspace.id}
+              type="button"
+              className="w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted/60 transition-colors"
+              onClick={() => { onChange(workspace.id); setAnchor(null); }}
+            >
+              {workspace.name}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function EnvironmentSelect({
+  value,
+  environments,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  environments: Environment[];
+  onChange: (id: string) => void;
+  disabled?: boolean;
+}) {
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function handleClick(e: MouseEvent) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setAnchor(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [anchor]);
+
+  const selected = environments.find((e) => e.id === value);
+  const label = selected?.name ?? "Sem ambiente";
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        className={cn(
+          "h-8 w-full flex items-center gap-1.5 rounded-lg border border-input bg-muted/50 pl-2.5 pr-2 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring hover:bg-muted/70",
+          disabled && "opacity-50 cursor-not-allowed pointer-events-none",
+        )}
+        onClick={() => {
+          if (anchor) { setAnchor(null); return; }
+          const rect = triggerRef.current!.getBoundingClientRect();
+          setAnchor({ x: rect.left, y: rect.bottom + 4, width: rect.width });
+        }}
+      >
+        <span className="flex-1 text-left truncate">{label}</span>
+        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+      </button>
+      {anchor && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
+          className="rounded-lg border border-border bg-popover p-1 shadow-xl"
+        >
+          <button
+            type="button"
+            className="w-full rounded-md px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+            onClick={() => { onChange(""); setAnchor(null); }}
+          >
+            Sem ambiente
+          </button>
+          {environments.map((env) => (
+            <button
+              key={env.id}
+              type="button"
+              className="w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted/60 transition-colors"
+              onClick={() => { onChange(env.id); setAnchor(null); }}
+            >
+              {env.name}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
 
 function getInitials(name: string) {
   return name
@@ -1925,25 +2164,14 @@ export function DevHttpClient() {
           source: "desktop-local",
         } satisfies LocalExecutionRequest);
       } else if (useLocalExecution) {
-        let agentToken = localAgentToken;
-
-        if (!hasLocalAgent || !agentToken) {
-          const connection = await connectLocalAgent();
-          setHasLocalAgent(connection.available);
-          setLocalAgentToken(connection.token);
-          agentToken = connection.token;
-        }
-
-        if (!agentToken) {
-          throw new Error(LOCAL_AGENT_REQUIRED_MESSAGE);
-        }
-
-        result = await executeLocalAgentRequest(agentToken, {
+        const agentExecution = await executeLocalAgentRequestWithRetry(localAgentToken, {
           ...payload,
           variables: selectedEnvironment?.variables ?? [],
           source: "agent-local",
         } satisfies LocalExecutionRequest);
+        result = agentExecution.response;
         setHasLocalAgent(true);
+        setLocalAgentToken(agentExecution.token);
       } else {
         result = await requestJson<ExecutionResponse>("/requests/execute", {
           method: "POST",
@@ -1969,12 +2197,9 @@ export function DevHttpClient() {
             : "Request executada.",
       );
     } catch (error) {
-      if (error instanceof Error && error.message.includes("Sessão do DevHttp Agent")) {
+      if (isLocalAgentRequiredError(error) || (error instanceof Error && error.message === LOCAL_AGENT_REQUIRED_MESSAGE)) {
         setHasLocalAgent(false);
         setLocalAgentToken("");
-      }
-
-      if (error instanceof Error && error.message === LOCAL_AGENT_REQUIRED_MESSAGE) {
         setOpenTabs((prev) => prev.map((tab) =>
           tab.tabId === activeTabId && tab.type === "request"
             ? {
@@ -3334,11 +3559,11 @@ export function DevHttpClient() {
       >
         <aside
           className={cn(
-            "relative border-r border-border bg-sidebar backdrop-blur-md flex flex-col gap-4 overflow-hidden min-w-0 transition-all duration-200 max-[1180px]:border-r-0 max-[1180px]:border-b",
-            sidebarCollapsed ? "p-0 w-0 opacity-0" : "p-4",
+            "relative border-r border-border bg-sidebar backdrop-blur-md flex flex-col gap-3 overflow-hidden min-w-0 transition-all duration-200 max-[1180px]:border-r-0 max-[1180px]:border-b",
+            sidebarCollapsed ? "p-0 w-0 opacity-0" : "p-3",
           )}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid gap-4 content-start">
+          <div className="min-h-0 flex-1 overflow-y-auto pl-0.5 pr-1 grid gap-3 content-start">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h1 className="text-lg font-bold leading-tight">DevHttp</h1>
@@ -3357,22 +3582,16 @@ export function DevHttpClient() {
             </div>
 
             <div className="flex items-center gap-2">
-              <select
-                value={auth.workspaceId}
-                onChange={(event) => handleWorkspaceChange(event.target.value)}
-                className={cn(selectClass, "flex-1 h-9")}
-              >
-                {auth.workspaces.map((membership) => (
-                  <option key={membership.workspace.id} value={membership.workspace.id}>
-                    {membership.workspace.name}
-                  </option>
-                ))}
-              </select>
+              <WorkspaceSelect
+                workspaceId={auth.workspaceId}
+                workspaces={auth.workspaces}
+                onChange={handleWorkspaceChange}
+              />
               <div ref={notificationsRef}>
                 <Button
                   variant="outline"
                   size="icon"
-                  className="h-9 w-9 shrink-0"
+                  className="h-8 w-8 shrink-0"
                   onClick={() => {
                     if (notificationsAnchor) {
                       setNotificationsAnchor(null);
@@ -3456,19 +3675,12 @@ export function DevHttpClient() {
               </div>
             </div>
 
-            <select
+            <EnvironmentSelect
               value={selectedEnvironmentId}
-              onChange={(event) => setSelectedEnvironmentId(event.target.value)}
-              className={selectClass}
+              environments={selectedProject?.environments ?? []}
+              onChange={setSelectedEnvironmentId}
               disabled={!selectedProject}
-            >
-              <option value="">Sem ambiente</option>
-              {(selectedProject?.environments ?? []).map((environment) => (
-                <option key={environment.id} value={environment.id}>
-                  {environment.name}
-                </option>
-              ))}
-            </select>
+            />
 
             <div className="grid gap-2">
             {filteredProjects.map((project) => {
@@ -3478,11 +3690,11 @@ export function DevHttpClient() {
                 <section
                   key={project.id}
                   className={cn(
-                    "rounded-xl border transition-colors overflow-hidden",
+                    "rounded-lg border transition-colors overflow-hidden",
                     isActiveProject ? "border-primary/40 bg-primary/5" : "border-border/70",
                   )}
                 >
-                  <div className="flex items-start gap-2 px-3 py-3">
+                  <div className="flex items-start gap-2 px-3 py-2">
                     <button
                       type="button"
                       onClick={() => selectProject(project.id)}
@@ -3520,8 +3732,8 @@ export function DevHttpClient() {
                   </div>
 
                   {isActiveProject ? (
-                    <div className="border-t border-border/60 px-3 py-3 grid gap-4">
-                      <div className="grid gap-2">
+                    <div className="border-t border-border/60 px-3 py-2 grid gap-3">
+                      <div className="grid gap-0.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
                             Colecoes
@@ -3560,7 +3772,7 @@ export function DevHttpClient() {
                                     <span className="text-[0.65rem] shrink-0 opacity-70">
                                       {isExpanded ? "▾" : "▸"}
                                     </span>
-                                    <span className="font-medium truncate min-w-0">{collection.name}</span>
+                                    <span className="truncate min-w-0 text-[0.8rem]">{collection.name}</span>
                                   </button>
 
                                   {canRenameProjectEntities ? (
@@ -3602,7 +3814,7 @@ export function DevHttpClient() {
                                         <div
                                           key={request.id}
                                           className={cn(
-                                            "group/request flex items-center gap-1.5 w-full min-w-0 pl-4 pr-1 py-0.5 text-xs rounded transition-colors",
+                                            "group/request flex items-center gap-1.5 w-full min-w-0 pl-4 pr-1 py-px text-xs rounded transition-colors",
                                             activeTabId === request.id
                                               ? "text-foreground bg-primary/8"
                                               : "text-muted-foreground hover:text-foreground hover:bg-white/5",
@@ -3616,7 +3828,7 @@ export function DevHttpClient() {
                                             <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
                                               {request.method}
                                             </span>
-                                            <span className="truncate min-w-0">{request.name}</span>
+                                            <span className="truncate min-w-0 text-[0.8rem]">{request.name}</span>
                                           </button>
                                           {canRenameProjectEntities ? (
                                             <button
@@ -3703,11 +3915,11 @@ export function DevHttpClient() {
             </div>
           </div>
 
-          <div className="mt-auto border-t border-border/60 pt-3">
+          <div className="mt-auto border-t border-border/60 pt-2">
             <div ref={userMenuRef} className="relative">
               <button
                 type="button"
-                className="flex w-full items-center gap-3 rounded-xl border border-border/60 bg-card/70 px-3 py-2.5 text-left hover:bg-muted/40 transition-colors"
+                className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card/70 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
                 onClick={() => setIsUserMenuOpen((current) => !current)}
               >
                 <UserAvatar user={bootstrap.user} />
@@ -3747,7 +3959,7 @@ export function DevHttpClient() {
           )}
         </aside>
 
-        <section className="p-5 flex flex-col gap-4 min-h-0 overflow-hidden">
+        <section className="p-3 flex flex-col gap-2 min-h-0 overflow-hidden">
           {sidebarCollapsed ? (
             <div className="shrink-0">
               <button
@@ -3762,7 +3974,7 @@ export function DevHttpClient() {
           ) : null}
 
           {openTabs.length > 0 && (
-            <div className="flex items-stretch overflow-x-auto -mx-5 border-b border-border/60 shrink-0">
+            <div className="flex items-stretch overflow-x-auto -mx-3 border-b border-border/60 shrink-0">
               {openTabs.map((tab) => {
                 const isActive = tab.tabId === activeTabId;
                 const envName =
@@ -3777,7 +3989,7 @@ export function DevHttpClient() {
                     key={tab.tabId}
                     onClick={() => activateTab(tab.tabId)}
                     className={cn(
-                      "group flex items-center gap-1.5 px-3 py-2.5 border-b-2 cursor-pointer whitespace-nowrap text-sm shrink-0 transition-colors select-none",
+                      "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 cursor-pointer whitespace-nowrap text-xs shrink-0 transition-colors select-none",
                       isActive
                         ? "border-primary text-foreground bg-primary/5"
                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/3",
@@ -3868,34 +4080,14 @@ export function DevHttpClient() {
                   : undefined
               }
             >
-              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden py-0">
-                <CardContent className="p-4 flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
-                  <div className="flex items-center gap-2 flex-wrap shrink-0">
-                    <Input
-                      value={draftRequest.name}
-                      onChange={(event) => updateDraft("name", event.target.value)}
-                      placeholder="Nome da request"
-                      className="text-base font-semibold"
-                    />
-                    {selectedCollectionId ? (
-                      <Badge variant="outline" className="font-mono text-xs">
-                        Colecao ativa
-                      </Badge>
-                    ) : null}
-                  </div>
-
+              <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-hidden lg:h-full pt-3">
                   <div className="flex gap-2 max-[720px]:grid max-[720px]:grid-cols-1 shrink-0">
-                    <select
+                    <MethodSelect
                       value={draftRequest.method}
-                      onChange={(event) => updateDraft("method", event.target.value as HttpMethod)}
-                      className={cn(selectClass, "w-28 shrink-0")}
-                    >
-                      {METHODS.map((method) => (
-                        <option key={method} value={method}>
-                          {method}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(method) => updateDraft("method", method as HttpMethod)}
+                      methods={METHODS}
+                      className="w-28"
+                    />
                     <VariableHighlightInput
                       value={draftRequest.url}
                       onChange={(val) => updateDraft("url", val)}
@@ -3939,7 +4131,7 @@ export function DevHttpClient() {
                       <TabsTrigger value="script">Script</TabsTrigger>
                     </TabsList>
 
-                    <TabsContent value="headers" className="flex-1 min-h-0 overflow-y-auto mt-4">
+                    <TabsContent value="headers" className="flex-1 min-h-0 overflow-y-auto mt-2">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Headers
@@ -3965,7 +4157,7 @@ export function DevHttpClient() {
                       />
                     </TabsContent>
 
-                    <TabsContent value="queryParams" className="flex-1 min-h-0 overflow-y-auto mt-4">
+                    <TabsContent value="queryParams" className="flex-1 min-h-0 overflow-y-auto mt-2">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Query Params
@@ -3993,7 +4185,7 @@ export function DevHttpClient() {
                       />
                     </TabsContent>
 
-                    <TabsContent value="body" className="flex-1 min-h-0 overflow-y-auto mt-4">
+                    <TabsContent value="body" className="flex-1 min-h-0 overflow-y-auto mt-2">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Body
@@ -4043,7 +4235,7 @@ export function DevHttpClient() {
                       )}
                     </TabsContent>
 
-                    <TabsContent value="script" className="flex-1 min-h-0 overflow-y-auto mt-4">
+                    <TabsContent value="script" className="flex-1 min-h-0 overflow-y-auto mt-2">
                       <div className="mb-3">
                         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Script pos-request
@@ -4057,8 +4249,7 @@ export function DevHttpClient() {
                       />
                     </TabsContent>
                   </Tabs>
-                </CardContent>
-              </Card>
+              </div>
 
               <div
                 className="hidden lg:flex items-center justify-center cursor-row-resize select-none"
@@ -4067,8 +4258,7 @@ export function DevHttpClient() {
                 <div className="h-2 w-full rounded-full bg-border/70 hover:bg-primary/50 transition-colors" />
               </div>
 
-              <Card className="backdrop-blur-md lg:min-h-0 lg:overflow-hidden py-0">
-                <CardContent className="p-4 flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
+              <div className="flex flex-col gap-2 lg:min-h-0 lg:overflow-hidden lg:h-full border-t border-border/40 lg:border-t-0 lg:border-l pt-2">
                   <Tabs
                     value={responseView}
                     onValueChange={(value) => setResponseView(value as "response" | "console")}
@@ -4080,57 +4270,32 @@ export function DevHttpClient() {
                         <TabsTrigger value="console">Console</TabsTrigger>
                       </TabsList>
                       {execution ? (
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "font-mono text-xs",
-                            execution.status >= 200 &&
-                              execution.status < 300 &&
-                              "border-green-500/40 text-green-400",
-                            execution.status >= 400 &&
-                              execution.status < 500 &&
-                              "border-yellow-500/40 text-yellow-400",
-                            execution.status >= 500 && "border-red-500/40 text-red-400",
-                          )}
-                        >
-                          {execution.status} · {execution.durationMs}ms
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "font-mono text-xs",
+                              execution.status >= 200 &&
+                                execution.status < 300 &&
+                                "border-green-500/40 text-green-400",
+                              execution.status >= 400 &&
+                                execution.status < 500 &&
+                                "border-yellow-500/40 text-yellow-400",
+                              execution.status >= 500 && "border-red-500/40 text-red-400",
+                            )}
+                          >
+                            {execution.status} · {execution.durationMs}ms
+                          </Badge>
+                          <span className="text-[0.65rem] text-muted-foreground/70" title="Origem da execução">
+                            {execution.source === "desktop-local" ? "local" : execution.source === "agent-local" ? "agent" : "srv"}
+                          </span>
+                        </div>
                       ) : null}
                     </div>
-                    {execution ? (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        Origem:{" "}
-                        <span className="font-medium text-foreground">
-                          {execution.source === "desktop-local"
-                            ? "Local desktop"
-                            : execution.source === "agent-local"
-                              ? "Agent local"
-                              : "Servidor"}
-                        </span>
-                      </p>
-                    ) : null}
 
-                    <TabsContent value="response" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+                    <TabsContent value="response" className="mt-2 flex-1 min-h-0 overflow-y-auto">
                       {execution ? (
                         <div className="grid gap-4">
-                          <div className="grid gap-3">
-                            <div className="grid gap-0.5">
-                              <span className="text-[0.7rem] font-medium text-muted-foreground uppercase tracking-wide">
-                                Status
-                              </span>
-                              <span className="text-sm">
-                                {execution.status} {execution.statusText}
-                              </span>
-                            </div>
-                            <div className="grid gap-0.5">
-                              <span className="text-[0.7rem] font-medium text-muted-foreground uppercase tracking-wide">
-                                URL final
-                              </span>
-                              <span className="text-sm font-mono break-all text-muted-foreground">
-                                {execution.resolvedUrl}
-                              </span>
-                            </div>
-                          </div>
                           <pre>{formatJsonSafely(execution.bodyText || "") || execution.bodyText}</pre>
                           {execution.scriptResult ? (
                             <div className="text-sm grid gap-1">
@@ -4195,7 +4360,7 @@ export function DevHttpClient() {
                       )}
                     </TabsContent>
 
-                    <TabsContent value="console" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+                    <TabsContent value="console" className="mt-2 flex-1 min-h-0 overflow-y-auto">
                       {execution ? (
                         <ExecutionConsoleViewer consoleData={execution.console} />
                       ) : (
@@ -4205,8 +4370,7 @@ export function DevHttpClient() {
                       )}
                     </TabsContent>
                   </Tabs>
-                </CardContent>
-              </Card>
+              </div>
             </div>
           ) : (
             <Card className="backdrop-blur-md flex-1 min-h-0 overflow-y-auto">

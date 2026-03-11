@@ -22,10 +22,17 @@ type SessionResponse = {
   workspaces: WorkspaceMembership[];
 };
 
+function isDesktopApiClient() {
+  return typeof window !== "undefined" && Boolean(window.devHttpDesktop);
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-type") && init?.body && typeof init.body === "string") {
     headers.set("content-type", "application/json");
+  }
+  if (!headers.has("x-devhttp-client") && isDesktopApiClient()) {
+    headers.set("x-devhttp-client", "desktop");
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {

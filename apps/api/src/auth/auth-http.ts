@@ -2,6 +2,9 @@ import { randomBytes } from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "devhttp_session";
 export const CSRF_COOKIE_NAME = "devhttp_csrf";
+export const CLIENT_HEADER_NAME = "x-devhttp-client";
+export const DESKTOP_CLIENT_VALUE = "desktop";
+export const DESKTOP_SESSION_MAX_AGE_SECONDS = 90 * 24 * 60 * 60;
 
 export type RequestLike = {
   headers: Record<string, string | string[] | undefined>;
@@ -62,6 +65,10 @@ export function getCsrfHeaderToken(request: RequestLike) {
   return toHeaderString(request.headers["x-csrf-token"]) || undefined;
 }
 
+export function isDesktopClient(request: RequestLike) {
+  return toHeaderString(request.headers[CLIENT_HEADER_NAME]) === DESKTOP_CLIENT_VALUE;
+}
+
 export function isSafeMethod(method: string | undefined) {
   const normalized = String(method ?? "GET").toUpperCase();
   return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
@@ -101,17 +108,20 @@ function serializeCookie(
   return segments.join("; ");
 }
 
-export function buildAuthCookies(sessionToken: string, csrfToken: string) {
+export function buildAuthCookies(sessionToken: string, csrfToken: string, persistForDesktop = false) {
   return [
     serializeCookie(SESSION_COOKIE_NAME, sessionToken, {
       httpOnly: true,
+      maxAge: persistForDesktop ? DESKTOP_SESSION_MAX_AGE_SECONDS : undefined,
     }),
-    buildCsrfCookie(csrfToken),
+    buildCsrfCookie(csrfToken, persistForDesktop),
   ];
 }
 
-export function buildCsrfCookie(csrfToken: string) {
-  return serializeCookie(CSRF_COOKIE_NAME, csrfToken);
+export function buildCsrfCookie(csrfToken: string, persistForDesktop = false) {
+  return serializeCookie(CSRF_COOKIE_NAME, csrfToken, {
+    maxAge: persistForDesktop ? DESKTOP_SESSION_MAX_AGE_SECONDS : undefined,
+  });
 }
 
 export function buildClearedAuthCookies() {

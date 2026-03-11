@@ -1,5 +1,11 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import type { ConsoleValue, ExecutionResponse, FormDataField, Variable } from "@devhttp/shared";
+import type {
+  ConsoleValue,
+  ExecutionResponse,
+  FormDataField,
+  RequestScriptLogEntry,
+  Variable,
+} from "@devhttp/shared";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { Script } from "node:vm";
@@ -22,6 +28,24 @@ type PerformedRequest = {
   bodyBuffer: Buffer;
   network: ConsoleValue;
 };
+
+type SocketSnapshot = {
+  localAddress: string | null;
+  localFamily: string | null;
+  localPort: number | null;
+  remoteAddress: string | null;
+  remoteFamily: string | null;
+  remotePort: number | null;
+};
+
+type TlsSnapshot = {
+  authorized: boolean;
+  authorizationError: string | null;
+  cipher: ConsoleValue;
+  protocol: string | null;
+  ephemeralKeyInfo: ConsoleValue;
+  peerCertificate: ConsoleValue;
+} | null;
 
 @Injectable()
 export class ExecutionService {
@@ -106,6 +130,9 @@ export class ExecutionService {
         input.postResponseScript,
         executionResponse,
         environment?.variables ?? [],
+      );
+      executionResponse.console.sections["Post-request Script"] = this.buildPostRequestScriptConsole(
+        executionResponse.scriptResult,
       );
     }
 
@@ -240,20 +267,21 @@ export class ExecutionService {
           headers: input.headers,
         },
         (response) => {
+          const socketSnapshot = this.captureSocketSnapshot(response.socket);
+          const tlsSnapshot = this.captureTlsSnapshot(
+            input.url.protocol === "https:" ? (response.socket as TLSSocket) : null,
+          );
           const chunks: Buffer[] = [];
           response.on("data", (chunk: Buffer | string) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           });
           response.on("end", () => {
-            const socket = response.socket;
-            const tlsSocket = input.url.protocol === "https:" ? (socket as TLSSocket) : null;
-
             resolve({
               status: response.statusCode ?? 0,
               statusText: response.statusMessage ?? "",
               headers: this.normalizeHeaders(response.headers),
               bodyBuffer: Buffer.concat(chunks),
-              network: this.buildNetworkConsole(socket, tlsSocket, request.reusedSocket),
+              network: this.buildNetworkConsole(socketSnapshot, tlsSnapshot, request.reusedSocket),
             });
           });
         },
@@ -283,42 +311,75 @@ export class ExecutionService {
   }
 
   private buildNetworkConsole(
-    socket: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number; remoteFamily?: string } | null,
-    tlsSocket: TLSSocket | null,
+    socket: SocketSnapshot,
+    tlsSnapshot: TlsSnapshot,
     reusedSocket: boolean,
   ): ConsoleValue {
-    const localFamily = socket?.localAddress?.includes(":") ? "IPv6" : socket?.localAddress ? "IPv4" : null;
-
     return {
       addresses: {
         local: {
-          address: socket?.localAddress ?? null,
-          family: localFamily,
-          port: socket?.localPort ?? null,
+          address: socket.localAddress,
+          family: socket.localFamily,
+          port: socket.localPort,
         },
         remote: {
-          address: socket?.remoteAddress ?? null,
-          family: socket?.remoteFamily ?? null,
-          port: socket?.remotePort ?? null,
+          address: socket.remoteAddress,
+          family: socket.remoteFamily,
+          port: socket.remotePort,
         },
       },
-      tls: tlsSocket
+      tls: tlsSnapshot
         ? {
             reused: reusedSocket,
-            authorized: tlsSocket.authorized,
-            authorizationError: tlsSocket.authorizationError
-              ? String(tlsSocket.authorizationError)
-              : null,
-            cipher: this.normalizeConsoleValue(tlsSocket.getCipher?.() ?? null),
-            protocol: tlsSocket.getProtocol?.() ?? null,
-            ephemeralKeyInfo: this.normalizeConsoleValue(
-              tlsSocket.getEphemeralKeyInfo?.() ?? {},
-            ),
-            peerCertificate: this.normalizeConsoleValue(
-              this.sanitizePeerCertificate(tlsSocket.getPeerCertificate?.() ?? null),
-            ),
+            ...tlsSnapshot,
           }
         : null,
+    };
+  }
+
+  private captureSocketSnapshot(
+    socket: {
+      localAddress?: string;
+      localFamily?: string;
+      localPort?: number;
+      remoteAddress?: string;
+      remoteFamily?: string;
+      remotePort?: number;
+    } | null,
+  ): SocketSnapshot {
+    const localAddress = socket?.localAddress ?? null;
+    const remoteAddress = socket?.remoteAddress ?? null;
+
+    return {
+      localAddress,
+      localFamily:
+        socket?.localFamily ?? (localAddress ? (localAddress.includes(":") ? "IPv6" : "IPv4") : null),
+      localPort: socket?.localPort ?? null,
+      remoteAddress,
+      remoteFamily:
+        socket?.remoteFamily ?? (remoteAddress ? (remoteAddress.includes(":") ? "IPv6" : "IPv4") : null),
+      remotePort: socket?.remotePort ?? null,
+    };
+  }
+
+  private captureTlsSnapshot(tlsSocket: TLSSocket | null): TlsSnapshot {
+    if (!tlsSocket) {
+      return null;
+    }
+
+    return {
+      authorized: tlsSocket.authorized,
+      authorizationError: tlsSocket.authorizationError
+        ? String(tlsSocket.authorizationError)
+        : null,
+      cipher: this.normalizeConsoleValue(tlsSocket.getCipher?.() ?? null),
+      protocol: tlsSocket.getProtocol?.() ?? null,
+      ephemeralKeyInfo: this.normalizeConsoleValue(
+        tlsSocket.getEphemeralKeyInfo?.() ?? {},
+      ),
+      peerCertificate: this.normalizeConsoleValue(
+        this.sanitizePeerCertificate(tlsSocket.getPeerCertificate?.() ?? null),
+      ),
     };
   }
 
@@ -389,6 +450,22 @@ export class ExecutionService {
     return String(value);
   }
 
+  private buildPostRequestScriptConsole(scriptResult: NonNullable<ExecutionResponse["scriptResult"]>): ConsoleValue {
+    const section: Record<string, ConsoleValue> = {
+      Logs: scriptResult.logs,
+      Tests: scriptResult.tests.map((test) => ({
+        name: test.name,
+        passed: test.passed,
+      })),
+    };
+
+    if (scriptResult.error) {
+      section.Error = scriptResult.error;
+    }
+
+    return section;
+  }
+
   private async runPostResponseScript(
     environmentId: string | undefined,
     source: string,
@@ -397,7 +474,16 @@ export class ExecutionService {
   ) {
     const variableMap = new Map(currentVariables.map((variable) => [variable.key, variable]));
     const tests: TestCollector = [];
-    const logs: string[] = [];
+    const logs: RequestScriptLogEntry[] = [];
+    const captureLog = (level: RequestScriptLogEntry["level"], args: unknown[]) => {
+      logs.push({
+        level,
+        value:
+          args.length <= 1
+            ? this.normalizeConsoleValue(args[0])
+            : this.normalizeConsoleValue(args),
+      });
+    };
 
     const sandbox = {
       response: {
@@ -430,8 +516,9 @@ export class ExecutionService {
         tests.push({ name, passed: Boolean(passed) });
       },
       console: {
-        log: (...args: unknown[]) => logs.push(args.map((arg) => String(arg)).join(" ")),
-        warn: (...args: unknown[]) => logs.push(args.map((arg) => String(arg)).join(" ")),
+        log: (...args: unknown[]) => captureLog("log", args),
+        warn: (...args: unknown[]) => captureLog("warn", args),
+        error: (...args: unknown[]) => captureLog("error", args),
       },
     };
 

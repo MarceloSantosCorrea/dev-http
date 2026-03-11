@@ -28,6 +28,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { PrismaService } from "../prisma/prisma.service";
 
+const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 interface CollectionNode {
   id: string;
   projectId: string;
@@ -244,6 +246,7 @@ export class StoreService {
         id: randomUUID(),
         userId,
         tokenHash: this.hashToken(token),
+        expiresAt: this.createSessionExpiry(),
       },
     });
 
@@ -318,6 +321,7 @@ export class StoreService {
         id: randomUUID(),
         userId: user.id,
         tokenHash: this.hashToken(token),
+        expiresAt: this.createSessionExpiry(),
       },
     });
 
@@ -343,6 +347,15 @@ export class StoreService {
       },
     });
     if (!session) {
+      return null;
+    }
+
+    if (session.expiresAt <= new Date()) {
+      await this.prisma.sessionToken.deleteMany({
+        where: {
+          id: session.id,
+        },
+      });
       return null;
     }
 
@@ -2023,6 +2036,10 @@ export class StoreService {
 
   private hashToken(token: string) {
     return createHash("sha256").update(token).digest("hex");
+  }
+
+  private createSessionExpiry() {
+    return new Date(Date.now() + SESSION_TTL_MS);
   }
 
   private toWorkspace(workspace: { id: string; name: string }): Workspace {

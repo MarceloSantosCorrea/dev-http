@@ -80,9 +80,15 @@ export interface FormDataField {
 
 export interface RequestScriptResult {
   tests: Array<{ name: string; passed: boolean }>;
-  logs: string[];
+  logs: RequestScriptLogEntry[];
   updatedVariables: Variable[];
   error?: string;
+}
+
+export interface RequestScriptLogEntry {
+  [key: string]: ConsoleValue;
+  level: "log" | "warn" | "error";
+  value: ConsoleValue;
 }
 
 export type ConsoleValue =

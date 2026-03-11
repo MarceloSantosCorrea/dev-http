@@ -83,6 +83,9 @@ function executeRequestLocally(input) {
       executionResponse,
       input.variables ?? [],
     );
+    executionResponse.console.sections["Post-request Script"] = buildPostRequestScriptConsole(
+      executionResponse.scriptResult,
+    );
     return executionResponse;
   });
 }
@@ -197,20 +200,21 @@ function performRequest(input) {
         headers: input.headers,
       },
       (response) => {
+        const socketSnapshot = captureSocketSnapshot(response.socket);
+        const tlsSnapshot = captureTlsSnapshot(
+          input.url.protocol === "https:" ? response.socket : null,
+        );
         const chunks = [];
         response.on("data", (chunk) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         response.on("end", () => {
-          const socket = response.socket;
-          const tlsSocket = input.url.protocol === "https:" ? socket : null;
-
           resolve({
             status: response.statusCode ?? 0,
             statusText: response.statusMessage ?? "",
             headers: normalizeHeaders(response.headers),
             bodyBuffer: Buffer.concat(chunks),
-            network: buildNetworkConsole(socket, tlsSocket, request.reusedSocket),
+            network: buildNetworkConsole(socketSnapshot, tlsSnapshot, request.reusedSocket),
           });
         });
       },
@@ -237,27 +241,27 @@ function normalizeHeaders(headers) {
   );
 }
 
-function buildNetworkConsole(socket, tlsSocket, reusedSocket) {
+function buildNetworkConsole(socket, tlsSnapshot, reusedSocket) {
   const network = {
     addresses: {
-      local: socket?.localAddress
+      local: socket.localAddress
         ? {
             address: socket.localAddress,
-            family: socket.localFamily ?? null,
-            port: socket.localPort ?? null,
+            family: socket.localFamily,
+            port: socket.localPort,
           }
         : null,
-      remote: socket?.remoteAddress
+      remote: socket.remoteAddress
         ? {
             address: socket.remoteAddress,
-            family: socket.remoteFamily ?? null,
-            port: socket.remotePort ?? null,
+            family: socket.remoteFamily,
+            port: socket.remotePort,
           }
         : null,
     },
   };
 
-  if (!tlsSocket || typeof tlsSocket.getCipher !== "function") {
+  if (!tlsSnapshot) {
     return network;
   }
 
@@ -265,13 +269,39 @@ function buildNetworkConsole(socket, tlsSocket, reusedSocket) {
     ...network,
     tls: {
       reused: Boolean(reusedSocket),
-      authorized: tlsSocket.authorized,
-      authorizationError: tlsSocket.authorizationError ?? null,
-      cipher: normalizeConsoleValue(tlsSocket.getCipher()),
-      protocol: tlsSocket.getProtocol?.() ?? null,
-      ephemeralKeyInfo: normalizeConsoleValue(tlsSocket.getEphemeralKeyInfo?.() ?? {}),
-      peerCertificate: normalizeConsoleValue(tlsSocket.getPeerCertificate?.(true) ?? null),
+      ...tlsSnapshot,
     },
+  };
+}
+
+function captureSocketSnapshot(socket) {
+  const localAddress = socket?.localAddress ?? null;
+  const remoteAddress = socket?.remoteAddress ?? null;
+
+  return {
+    localAddress,
+    localFamily:
+      socket?.localFamily ?? (localAddress ? (localAddress.includes(":") ? "IPv6" : "IPv4") : null),
+    localPort: socket?.localPort ?? null,
+    remoteAddress,
+    remoteFamily:
+      socket?.remoteFamily ?? (remoteAddress ? (remoteAddress.includes(":") ? "IPv6" : "IPv4") : null),
+    remotePort: socket?.remotePort ?? null,
+  };
+}
+
+function captureTlsSnapshot(tlsSocket) {
+  if (!tlsSocket || typeof tlsSocket.getCipher !== "function") {
+    return null;
+  }
+
+  return {
+    authorized: tlsSocket.authorized,
+    authorizationError: tlsSocket.authorizationError ?? null,
+    cipher: normalizeConsoleValue(tlsSocket.getCipher()),
+    protocol: tlsSocket.getProtocol?.() ?? null,
+    ephemeralKeyInfo: normalizeConsoleValue(tlsSocket.getEphemeralKeyInfo?.() ?? {}),
+    peerCertificate: normalizeConsoleValue(tlsSocket.getPeerCertificate?.(true) ?? null),
   };
 }
 
@@ -328,10 +358,32 @@ function normalizeConsoleValue(value) {
   return String(value);
 }
 
+function buildPostRequestScriptConsole(scriptResult) {
+  const section = {
+    Logs: scriptResult.logs,
+    Tests: scriptResult.tests.map((test) => ({
+      name: test.name,
+      passed: test.passed,
+    })),
+  };
+
+  if (scriptResult.error) {
+    section.Error = scriptResult.error;
+  }
+
+  return section;
+}
+
 function runPostResponseScript(source, executionResponse, currentVariables) {
   const variableMap = new Map(currentVariables.map((variable) => [variable.key, { ...variable }]));
   const tests = [];
   const logs = [];
+  const captureLog = (level, args) => {
+    logs.push({
+      level,
+      value: args.length <= 1 ? normalizeConsoleValue(args[0]) : normalizeConsoleValue(args),
+    });
+  };
 
   const sandbox = {
     response: {
@@ -364,8 +416,9 @@ function runPostResponseScript(source, executionResponse, currentVariables) {
       tests.push({ name, passed: Boolean(passed) });
     },
     console: {
-      log: (...args) => logs.push(args.map((arg) => String(arg)).join(" ")),
-      warn: (...args) => logs.push(args.map((arg) => String(arg)).join(" ")),
+      log: (...args) => captureLog("log", args),
+      warn: (...args) => captureLog("warn", args),
+      error: (...args) => captureLog("error", args),
     },
   };
 

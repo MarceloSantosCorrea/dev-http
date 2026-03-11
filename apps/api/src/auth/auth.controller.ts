@@ -7,6 +7,7 @@ import {
   buildClearedAuthCookies,
   createCsrfToken,
   getCsrfCookieToken,
+  isDesktopClient,
   type RequestLike,
   type ResponseLike,
 } from "./auth-http";
@@ -26,11 +27,15 @@ export class AuthController {
   @Post("login")
   async login(
     @Body() body: LoginDto,
+    @Req() request: RequestLike,
     @Res({ passthrough: true }) response: ResponseLike,
   ) {
     const result = await this.authService.login(body.email, body.password);
     const csrfToken = createCsrfToken();
-    response.setHeader("Set-Cookie", buildAuthCookies(result.token ?? "", csrfToken));
+    response.setHeader(
+      "Set-Cookie",
+      buildAuthCookies(result.token ?? "", csrfToken, isDesktopClient(request)),
+    );
     return {
       user: result.user,
       workspaceId: result.workspaceId,
@@ -41,11 +46,15 @@ export class AuthController {
   @Post("register")
   async register(
     @Body() body: RegisterDto,
+    @Req() request: RequestLike,
     @Res({ passthrough: true }) response: ResponseLike,
   ) {
     const result = await this.store.register(body);
     const csrfToken = createCsrfToken();
-    response.setHeader("Set-Cookie", buildAuthCookies(result.token ?? "", csrfToken));
+    response.setHeader(
+      "Set-Cookie",
+      buildAuthCookies(result.token ?? "", csrfToken, isDesktopClient(request)),
+    );
     return {
       user: result.user,
       workspaceId: result.workspaceId,
@@ -72,7 +81,7 @@ export class AuthController {
     const user = await this.authService.requireUserFromRequest(request);
     const workspaces = await this.store.listWorkspacesForUser(user.id);
     if (!getCsrfCookieToken(request)) {
-      response.setHeader("Set-Cookie", buildCsrfCookie(createCsrfToken()));
+      response.setHeader("Set-Cookie", buildCsrfCookie(createCsrfToken(), isDesktopClient(request)));
     }
     return {
       user,

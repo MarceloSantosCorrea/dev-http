@@ -39,7 +39,7 @@ async function bootstrap() {
       callback(new Error(`Origin não permitida: ${origin}`), false);
     },
     credentials: true,
-    allowedHeaders: ["content-type", "authorization", "x-csrf-token"],
+    allowedHeaders: ["content-type", "authorization", "x-csrf-token", "x-devhttp-client"],
     methods: ["GET", "HEAD", "OPTIONS", "POST", "PATCH", "DELETE"],
   });
   app.useGlobalPipes(
