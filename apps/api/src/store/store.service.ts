@@ -279,9 +279,9 @@ export class StoreService {
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
       include: {
-        collections: { orderBy: { createdAt: "desc" } },
-        environments: { orderBy: { createdAt: "desc" } },
-        requests: { orderBy: { createdAt: "desc" } },
+        collections: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        environments: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        requests: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
       },
     });
 
@@ -878,9 +878,9 @@ export class StoreService {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       include: {
-        collections: { orderBy: { createdAt: "desc" } },
-        environments: { orderBy: { createdAt: "desc" } },
-        requests: { orderBy: { createdAt: "desc" } },
+        collections: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        environments: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        requests: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
       },
     });
     if (!project) {
@@ -1026,6 +1026,54 @@ export class StoreService {
     });
 
     return this.toCollection(updated);
+  }
+
+  async reorderCollections(userId: string, projectId: string, ids: string[]) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    await Promise.all(
+      ids.map((id, index) =>
+        this.prisma.collection.update({
+          where: { id, projectId },
+          data: { order: index },
+        }),
+      ),
+    );
+
+    return { reordered: true };
+  }
+
+  async reorderRequests(userId: string, projectId: string, ids: string[]) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    await Promise.all(
+      ids.map((id, index) =>
+        this.prisma.request.update({
+          where: { id, projectId },
+          data: { order: index },
+        }),
+      ),
+    );
+
+    return { reordered: true };
+  }
+
+  async reorderEnvironments(userId: string, projectId: string, ids: string[]) {
+    const projectWorkspace = await this.getProjectWorkspace(projectId);
+    await this.requireWorkspaceRole(userId, projectWorkspace.workspaceId, ["owner", "admin", "editor"]);
+
+    await Promise.all(
+      ids.map((id, index) =>
+        this.prisma.environment.update({
+          where: { id, projectId },
+          data: { order: index },
+        }),
+      ),
+    );
+
+    return { reordered: true };
   }
 
   async saveEnvironment(
@@ -1896,9 +1944,9 @@ export class StoreService {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       include: {
-        collections: { orderBy: { createdAt: "desc" } },
-        environments: { orderBy: { createdAt: "desc" } },
-        requests: { orderBy: { createdAt: "desc" } },
+        collections: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        environments: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+        requests: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
       },
     });
     if (!project) {

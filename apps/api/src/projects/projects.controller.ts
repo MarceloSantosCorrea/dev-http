@@ -14,6 +14,7 @@ import { AuthService } from "../auth/auth.service";
 import type { RequestLike } from "../auth/auth-http";
 import { CreateCollectionDto } from "./dto/create-collection.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
+import { ReorderDto } from "./dto/reorder.dto";
 import { SaveEnvironmentDto } from "./dto/save-environment.dto";
 import { SaveRequestDto } from "./dto/save-request.dto";
 import { UpdateCollectionDto } from "./dto/update-collection.dto";
@@ -77,6 +78,17 @@ export class ProjectsController {
     return this.projectsService.saveEnvironment(user.id, projectId, body);
   }
 
+  @Patch("projects/:projectId/environments/reorder")
+  async reorderEnvironments(
+    @Param("projectId") projectId: string,
+    @Body() body: ReorderDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.reorderEnvironments(user.id, projectId, body);
+  }
+
   @Post("projects/:projectId/collections")
   async createCollection(
     @Param("projectId") projectId: string,
@@ -86,6 +98,17 @@ export class ProjectsController {
     this.authService.requireCsrf(request);
     const user = await this.authService.requireUserFromRequest(request);
     return this.projectsService.createCollection(user.id, projectId, body);
+  }
+
+  @Patch("projects/:projectId/collections/reorder")
+  async reorderCollections(
+    @Param("projectId") projectId: string,
+    @Body() body: ReorderDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.reorderCollections(user.id, projectId, body);
   }
 
   @Patch("projects/:projectId/collections/:collectionId")
@@ -119,6 +142,17 @@ export class ProjectsController {
     this.authService.requireCsrf(request);
     const user = await this.authService.requireUserFromRequest(request);
     return this.projectsService.saveRequest(user.id, projectId, body);
+  }
+
+  @Patch("projects/:projectId/requests/reorder")
+  async reorderRequests(
+    @Param("projectId") projectId: string,
+    @Body() body: ReorderDto,
+    @Req() request: RequestLike,
+  ) {
+    this.authService.requireCsrf(request);
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.projectsService.reorderRequests(user.id, projectId, body);
   }
 
   @Patch("projects/:projectId/requests/:requestId")

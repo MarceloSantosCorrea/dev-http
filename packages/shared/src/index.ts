@@ -118,6 +118,7 @@ export interface RequestDefinition {
   formData: FormDataField[];
   postResponseScript: string;
   updatedAt: string;
+  order?: number;
 }
 
 export interface ExecutedRequest {

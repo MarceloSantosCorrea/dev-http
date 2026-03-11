@@ -97,6 +97,7 @@ model Collection {
   projectId          String
   name               String       @db.VarChar(191)
   parentCollectionId String?      @db.VarChar(191)
+  order              Int          @default(0)
   project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parentCollection   Collection?  @relation("CollectionTree", fields: [parentCollectionId], references: [id], onDelete: SetNull)
   childCollections   Collection[] @relation("CollectionTree")
@@ -114,6 +115,7 @@ model Environment {
   scope     VariableScope
   name      String        @db.VarChar(191)
   variables Json
+  order     Int           @default(0)
   project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -134,6 +136,7 @@ model Request {
   body               String      @db.LongText
   formData           Json
   postResponseScript String      @db.LongText
+  order              Int         @default(0)
   project            Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   collection         Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   createdAt          DateTime    @default(now())

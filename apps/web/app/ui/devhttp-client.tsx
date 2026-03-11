@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { Bell, ChevronDown, ExternalLink, Pencil } from "lucide-react";
+import { Bell, ChevronDown, Copy, ExternalLink, GripVertical, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type {
   AuthResponse,
   BodyType,
@@ -1427,6 +1430,253 @@ function emptyPasswordForm(): PasswordFormState {
   };
 }
 
+function SortableRequestItem({
+  request,
+  isActive,
+  canRename,
+  onSelect,
+  onRename,
+  onDuplicate,
+}: {
+  request: BootstrapRequest;
+  isActive: boolean;
+  canRename: boolean;
+  onSelect: (req: BootstrapRequest) => void;
+  onRename: (id: string, name: string) => void;
+  onDuplicate: (req: BootstrapRequest) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: request.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "group/request flex items-center gap-1 w-full min-w-0 pl-2 pr-1 py-px text-xs rounded transition-colors",
+        isActive
+          ? "text-foreground bg-primary/8"
+          : "text-muted-foreground hover:text-foreground hover:bg-white/5",
+      )}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="flex items-center justify-center w-4 h-4 opacity-0 group-hover/request:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing shrink-0"
+        title="Arrastar"
+      >
+        <GripVertical className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelect(request)}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+      >
+        <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
+          {request.method}
+        </span>
+        <span className="truncate min-w-0 text-[0.8rem]">{request.name}</span>
+      </button>
+      {canRename ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDuplicate(request);
+          }}
+          className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/request:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+          title="Duplicar request"
+        >
+          <Copy className="h-3 w-3" />
+        </button>
+      ) : null}
+      {canRename ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRename(request.id, request.name);
+          }}
+          className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/request:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+          title="Renomear request"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function SortableCollectionItem({
+  collection,
+  collectionRequests,
+  isExpanded,
+  isSelected,
+  canRename,
+  activeTabId,
+  onSelectCollection,
+  onRenameCollection,
+  onOpenMenu,
+  onSelectRequest,
+  onRenameRequest,
+  onDuplicateRequest,
+  onRequestDragEnd,
+}: {
+  collection: BootstrapCollection;
+  collectionRequests: BootstrapRequest[];
+  isExpanded: boolean;
+  isSelected: boolean;
+  canRename: boolean;
+  activeTabId: string;
+  onSelectCollection: (id: string) => void;
+  onRenameCollection: (id: string, name: string) => void;
+  onOpenMenu: (id: string, x: number, y: number) => void;
+  onSelectRequest: (req: BootstrapRequest) => void;
+  onRenameRequest: (id: string, name: string) => void;
+  onDuplicateRequest: (req: BootstrapRequest) => void;
+  onRequestDragEnd: (collectionId: string, event: DragEndEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: collection.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="grid gap-1">
+      <div className="flex items-center gap-1 group/collection">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="flex items-center justify-center w-4 h-4 opacity-0 group-hover/collection:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing shrink-0"
+          title="Arrastar"
+        >
+          <GripVertical className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectCollection(collection.id)}
+          className={cn(
+            "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-white/5 transition-colors min-w-0 text-left",
+            isSelected ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <span className="text-[0.65rem] shrink-0 opacity-70">{isExpanded ? "▾" : "▸"}</span>
+          <span className="truncate min-w-0 text-[0.8rem]">{collection.name}</span>
+        </button>
+        {canRename ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRenameCollection(collection.id, collection.name);
+            }}
+            className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/collection:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+            title="Renomear coleção"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = e.currentTarget.getBoundingClientRect();
+            onOpenMenu(collection.id, rect.left, rect.bottom + 4);
+          }}
+          className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/collection:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
+          title="Adicionar"
+        >
+          +
+        </button>
+      </div>
+      {isExpanded ? (
+        <div className="grid">
+          {collectionRequests.length > 0 ? (
+            <DndContext
+              collisionDetection={closestCenter}
+              onDragEnd={(event) => onRequestDragEnd(collection.id, event)}
+            >
+              <SortableContext
+                items={collectionRequests.map((r) => r.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {collectionRequests.map((request) => (
+                  <SortableRequestItem
+                    key={request.id}
+                    request={request}
+                    isActive={activeTabId === request.id}
+                    canRename={canRename}
+                    onSelect={onSelectRequest}
+                    onRename={onRenameRequest}
+                    onDuplicate={onDuplicateRequest}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <p className="pl-4 text-xs text-muted-foreground">Sem requests nesta colecao.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SortableEnvironmentItem({
+  environment,
+  isActive,
+  onSelect,
+}: {
+  environment: Environment;
+  isActive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: environment.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-1 group/env">
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="flex items-center justify-center w-4 h-4 opacity-0 group-hover/env:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing shrink-0"
+        title="Arrastar"
+      >
+        <GripVertical className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelect(environment.id)}
+        className={cn(
+          "flex items-center gap-1.5 w-full min-w-0 px-1 py-0.5 text-xs rounded transition-colors text-left",
+          isActive
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground hover:bg-white/5",
+        )}
+      >
+        <span className="text-[0.6rem] shrink-0 opacity-50">○</span>
+        <span className="truncate min-w-0">{environment.name}</span>
+      </button>
+    </div>
+  );
+}
+
 export function DevHttpClient() {
   const router = useRouter();
   const [auth, setAuth] = useState<AuthResponse | null>(null);
@@ -1440,7 +1690,7 @@ export function DevHttpClient() {
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState("");
   const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("");
-  const [collectionMenu, setCollectionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [collectionMenu, setCollectionMenu] = useState<{ id: string; projectId: string; x: number; y: number } | null>(null);
   const [feedback, setFeedback] = useState("");
   const [hasDesktopBridge, setHasDesktopBridge] = useState(
     () => typeof window !== "undefined" && Boolean(window.devHttpDesktop?.executeLocalRequest),
@@ -1452,6 +1702,7 @@ export function DevHttpClient() {
     "headers",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isProjectMinimized, setIsProjectMinimized] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [createModalType, setCreateModalType] = useState<CreateModalType>(null);
   const [createName, setCreateName] = useState("");
@@ -3455,6 +3706,215 @@ export function DevHttpClient() {
     setPendingCloseTabId(null);
   }
 
+  async function handleCollectionDragEnd(projectId: string, event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const project = bootstrap?.projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const oldIndex = project.collections.findIndex((c) => c.id === active.id);
+    const newIndex = project.collections.findIndex((c) => c.id === over.id);
+    const newOrder = arrayMove(project.collections, oldIndex, newIndex);
+
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            projects: current.projects.map((p) =>
+              p.id === projectId ? { ...p, collections: newOrder } : p,
+            ),
+          }
+        : current,
+    );
+
+    try {
+      await requestJson(`/projects/${projectId}/collections/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ ids: newOrder.map((c) => c.id) }),
+      });
+    } catch {
+      toast.error("Falha ao reordenar coleções.");
+    }
+  }
+
+  async function handleRequestDragEnd(
+    projectId: string,
+    collectionId: string,
+    event: DragEndEvent,
+  ) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const project = bootstrap?.projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const collectionRequests = project.requests.filter((r) => r.collectionId === collectionId);
+    const oldIndex = collectionRequests.findIndex((r) => r.id === active.id);
+    const newIndex = collectionRequests.findIndex((r) => r.id === over.id);
+    const reordered = arrayMove(collectionRequests, oldIndex, newIndex);
+    const otherRequests = project.requests.filter((r) => r.collectionId !== collectionId);
+
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            projects: current.projects.map((p) =>
+              p.id === projectId
+                ? { ...p, requests: [...otherRequests, ...reordered] }
+                : p,
+            ),
+          }
+        : current,
+    );
+
+    try {
+      await requestJson(`/projects/${projectId}/requests/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ ids: reordered.map((r) => r.id) }),
+      });
+    } catch {
+      toast.error("Falha ao reordenar requests.");
+    }
+  }
+
+  async function handleEnvironmentDragEnd(projectId: string, event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const project = bootstrap?.projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const oldIndex = project.environments.findIndex((e) => e.id === active.id);
+    const newIndex = project.environments.findIndex((e) => e.id === over.id);
+    const newOrder = arrayMove(project.environments, oldIndex, newIndex);
+
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            projects: current.projects.map((p) =>
+              p.id === projectId ? { ...p, environments: newOrder } : p,
+            ),
+          }
+        : current,
+    );
+
+    try {
+      await requestJson(`/projects/${projectId}/environments/reorder`, {
+        method: "PATCH",
+        body: JSON.stringify({ ids: newOrder.map((e) => e.id) }),
+      });
+    } catch {
+      toast.error("Falha ao reordenar ambientes.");
+    }
+  }
+
+  async function handleDuplicateCollection(collection: BootstrapCollection, projectId: string) {
+    try {
+      const newCollection = await requestJson<BootstrapCollection>(
+        `/projects/${projectId}/collections`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name: `${collection.name} (cópia)` }),
+        },
+      );
+
+      const project = bootstrap?.projects.find((p) => p.id === projectId);
+      const collectionRequests =
+        project?.requests.filter((r) => r.collectionId === collection.id) ?? [];
+
+      const newRequests: BootstrapRequest[] = [];
+      for (const request of collectionRequests) {
+        const newRequest = await requestJson<BootstrapRequest>(
+          `/projects/${projectId}/requests`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: `${request.name} (cópia)`,
+              method: request.method,
+              url: request.url,
+              collectionId: newCollection.id,
+              headers: meaningfulKeyValues(request.headers),
+              queryParams: meaningfulKeyValues(request.queryParams),
+              bodyType: request.bodyType,
+              body: request.body,
+              formData: meaningfulFormData(request.formData),
+              postResponseScript: request.postResponseScript,
+            }),
+          },
+        );
+        newRequests.push({ ...newRequest, collectionId: newCollection.id });
+      }
+
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((p) =>
+                p.id === projectId
+                  ? {
+                      ...p,
+                      collections: [...p.collections, newCollection],
+                      requests: [...p.requests, ...newRequests],
+                    }
+                  : p,
+              ),
+            }
+          : current,
+      );
+      setCollectionMenu(null);
+      toast.success("Coleção duplicada.");
+    } catch {
+      toast.error("Falha ao duplicar coleção.");
+    }
+  }
+
+  async function handleDuplicateRequest(request: BootstrapRequest, projectId: string) {
+    try {
+      const newRequest = await requestJson<BootstrapRequest>(
+        `/projects/${projectId}/requests`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: `${request.name} (cópia)`,
+            method: request.method,
+            url: request.url,
+            collectionId: request.collectionId,
+            headers: meaningfulKeyValues(request.headers),
+            queryParams: meaningfulKeyValues(request.queryParams),
+            bodyType: request.bodyType,
+            body: request.body,
+            formData: meaningfulFormData(request.formData),
+            postResponseScript: request.postResponseScript,
+          }),
+        },
+      );
+
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((p) =>
+                p.id === projectId
+                  ? {
+                      ...p,
+                      requests: [
+                        ...p.requests,
+                        { ...newRequest, collectionId: request.collectionId },
+                      ],
+                    }
+                  : p,
+              ),
+            }
+          : current,
+      );
+      toast.success("Request duplicada.");
+    } catch {
+      toast.error("Falha ao duplicar request.");
+    }
+  }
+
   function updateEnvironmentState(
     updater: (environment: Environment) => Environment,
   ) {
@@ -3697,10 +4157,27 @@ export function DevHttpClient() {
                   <div className="flex items-start gap-2 px-3 py-2">
                     <button
                       type="button"
-                      onClick={() => selectProject(project.id)}
+                      onClick={() => {
+                        if (project.id === selectedProjectId) {
+                          setIsProjectMinimized((prev) => !prev);
+                        } else {
+                          selectProject(project.id);
+                          setIsProjectMinimized(false);
+                        }
+                      }}
                       className="flex-1 text-left min-w-0"
                     >
-                      <strong className="block text-sm font-medium truncate">{project.name}</strong>
+                      <div className="flex items-center gap-1">
+                        <strong className="block text-sm font-medium truncate">{project.name}</strong>
+                        {isActiveProject ? (
+                          <ChevronDown
+                            className={cn(
+                              "h-3.5 w-3.5 transition-transform shrink-0 text-muted-foreground",
+                              isProjectMinimized && "-rotate-90",
+                            )}
+                          />
+                        ) : null}
+                      </div>
                       {project.description ? (
                         <span className="text-xs text-muted-foreground truncate">{project.description}</span>
                       ) : null}
@@ -3731,7 +4208,7 @@ export function DevHttpClient() {
                     </button>
                   </div>
 
-                  {isActiveProject ? (
+                  {isActiveProject && !isProjectMinimized ? (
                     <div className="border-t border-border/60 px-3 py-2 grid gap-3">
                       <div className="grid gap-0.5">
                         <div className="flex items-center justify-between gap-2">
@@ -3750,111 +4227,50 @@ export function DevHttpClient() {
                         </div>
 
                         {project.collections.length > 0 ? (
-                          project.collections.map((collection) => {
-                            const isExpanded = expandedCollectionIds.includes(collection.id);
-                            const collectionRequests = project.requests.filter(
-                              (request) => request.collectionId === collection.id,
-                            );
-
-                            return (
-                              <div key={collection.id} className="grid gap-1">
-                                <div className="flex items-center gap-1 group/collection">
-                                  <button
-                                    type="button"
-                                    onClick={() => selectCollection(collection.id)}
-                                    className={cn(
-                                      "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-white/5 transition-colors min-w-0 text-left",
-                                      selectedCollectionId === collection.id
-                                        ? "text-foreground"
-                                        : "text-muted-foreground hover:text-foreground",
-                                    )}
-                                  >
-                                    <span className="text-[0.65rem] shrink-0 opacity-70">
-                                      {isExpanded ? "▾" : "▸"}
-                                    </span>
-                                    <span className="truncate min-w-0 text-[0.8rem]">{collection.name}</span>
-                                  </button>
-
-                                  {canRenameProjectEntities ? (
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openRenameModal("collection", collection.id, collection.name, project.id);
-                                      }}
-                                      className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/collection:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
-                                      title="Renomear coleção"
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </button>
-                                  ) : null}
-
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const rect = e.currentTarget.getBoundingClientRect();
-                                      setCollectionMenu((prev) =>
-                                        prev?.id === collection.id
-                                          ? null
-                                          : { id: collection.id, x: rect.left, y: rect.bottom + 4 }
-                                      );
-                                    }}
-                                    className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/collection:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
-                                    title="Adicionar"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-
-                                {isExpanded ? (
-                                  <div className="grid">
-                                    {collectionRequests.length > 0 ? (
-                                      collectionRequests.map((request) => (
-                                        <div
-                                          key={request.id}
-                                          className={cn(
-                                            "group/request flex items-center gap-1.5 w-full min-w-0 pl-4 pr-1 py-px text-xs rounded transition-colors",
-                                            activeTabId === request.id
-                                              ? "text-foreground bg-primary/8"
-                                              : "text-muted-foreground hover:text-foreground hover:bg-white/5",
-                                          )}
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => selectRequest(request)}
-                                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                                          >
-                                            <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
-                                              {request.method}
-                                            </span>
-                                            <span className="truncate min-w-0 text-[0.8rem]">{request.name}</span>
-                                          </button>
-                                          {canRenameProjectEntities ? (
-                                            <button
-                                              type="button"
-                                              onClick={(event) => {
-                                                event.stopPropagation();
-                                                openRenameModal("request", request.id, request.name, project.id);
-                                              }}
-                                              className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/request:opacity-100 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all shrink-0"
-                                              title="Renomear request"
-                                            >
-                                              <Pencil className="h-3 w-3" />
-                                            </button>
-                                          ) : null}
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <p className="pl-4 text-xs text-muted-foreground">
-                                        Sem requests nesta colecao.
-                                      </p>
-                                    )}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })
+                          <DndContext
+                            collisionDetection={closestCenter}
+                            onDragEnd={(event) => void handleCollectionDragEnd(project.id, event)}
+                          >
+                            <SortableContext
+                              items={project.collections.map((c) => c.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {project.collections.map((collection) => (
+                                <SortableCollectionItem
+                                  key={collection.id}
+                                  collection={collection}
+                                  collectionRequests={project.requests.filter(
+                                    (r) => r.collectionId === collection.id,
+                                  )}
+                                  isExpanded={expandedCollectionIds.includes(collection.id)}
+                                  isSelected={selectedCollectionId === collection.id}
+                                  canRename={canRenameProjectEntities}
+                                  activeTabId={activeTabId}
+                                  onSelectCollection={selectCollection}
+                                  onRenameCollection={(id, name) =>
+                                    openRenameModal("collection", id, name, project.id)
+                                  }
+                                  onOpenMenu={(id, x, y) =>
+                                    setCollectionMenu((prev) =>
+                                      prev?.id === id
+                                        ? null
+                                        : { id, projectId: project.id, x, y },
+                                    )
+                                  }
+                                  onSelectRequest={selectRequest}
+                                  onRenameRequest={(id, name) =>
+                                    openRenameModal("request", id, name, project.id)
+                                  }
+                                  onDuplicateRequest={(req) =>
+                                    void handleDuplicateRequest(req, project.id)
+                                  }
+                                  onRequestDragEnd={(collId, event) =>
+                                    void handleRequestDragEnd(project.id, collId, event)
+                                  }
+                                />
+                              ))}
+                            </SortableContext>
+                          </DndContext>
                         ) : (
                           <p className="text-xs text-muted-foreground px-1">
                             Nenhuma colecao criada.
@@ -3879,22 +4295,24 @@ export function DevHttpClient() {
                         </div>
 
                         {project.environments.length > 0 ? (
-                          project.environments.map((environment) => (
-                            <button
-                              key={environment.id}
-                              type="button"
-                              onClick={() => selectEnvironment(environment.id)}
-                              className={cn(
-                                "flex items-center gap-1.5 w-full min-w-0 px-1 py-0.5 text-xs rounded transition-colors text-left",
-                                activeTabId === `env-${environment.id}`
-                                  ? "text-foreground"
-                                  : "text-muted-foreground hover:text-foreground hover:bg-white/5",
-                              )}
+                          <DndContext
+                            collisionDetection={closestCenter}
+                            onDragEnd={(event) => void handleEnvironmentDragEnd(project.id, event)}
+                          >
+                            <SortableContext
+                              items={project.environments.map((e) => e.id)}
+                              strategy={verticalListSortingStrategy}
                             >
-                              <span className="text-[0.6rem] shrink-0 opacity-50">○</span>
-                              <span className="truncate min-w-0">{environment.name}</span>
-                            </button>
-                          ))
+                              {project.environments.map((environment) => (
+                                <SortableEnvironmentItem
+                                  key={environment.id}
+                                  environment={environment}
+                                  isActive={activeTabId === `env-${environment.id}`}
+                                  onSelect={selectEnvironment}
+                                />
+                              ))}
+                            </SortableContext>
+                          </DndContext>
                         ) : (
                           <p className="text-xs text-muted-foreground px-1">
                             Nenhum ambiente criado.
@@ -4651,6 +5069,20 @@ export function DevHttpClient() {
           >
             Nova coleção
           </button>
+          {canRenameProjectEntities ? (
+            <button
+              type="button"
+              className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+              onClick={() => {
+                const col = bootstrap?.projects
+                  .find((p) => p.id === collectionMenu.projectId)
+                  ?.collections.find((c) => c.id === collectionMenu.id);
+                if (col) void handleDuplicateCollection(col, collectionMenu.projectId);
+              }}
+            >
+              Duplicar coleção
+            </button>
+          ) : null}
         </div>,
         document.body,
       )}

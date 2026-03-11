@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { StoreService } from "../store/store.service";
 import { CreateCollectionDto } from "./dto/create-collection.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
+import { ReorderDto } from "./dto/reorder.dto";
 import { SaveEnvironmentDto } from "./dto/save-environment.dto";
 import { SaveRequestDto } from "./dto/save-request.dto";
 import { UpdateCollectionDto } from "./dto/update-collection.dto";
@@ -108,6 +109,18 @@ export class ProjectsService {
     return this.store.updateRequest(userId, projectId, requestId, {
       name: dto.name,
     });
+  }
+
+  async reorderCollections(userId: string, projectId: string, dto: ReorderDto) {
+    return this.store.reorderCollections(userId, projectId, dto.ids);
+  }
+
+  async reorderRequests(userId: string, projectId: string, dto: ReorderDto) {
+    return this.store.reorderRequests(userId, projectId, dto.ids);
+  }
+
+  async reorderEnvironments(userId: string, projectId: string, dto: ReorderDto) {
+    return this.store.reorderEnvironments(userId, projectId, dto.ids);
   }
 
   async importPostman(userId: string, projectId: string, payload: PostmanImportPayload) {
