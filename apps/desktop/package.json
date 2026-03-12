@@ -1,6 +1,6 @@
 {
   "name": "@devhttp/desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "productName": "DevHttp",
   "description": "Shell desktop do DevHttp baseado em Electron.",
