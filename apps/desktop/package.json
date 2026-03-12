@@ -7,12 +7,12 @@
   "author": "Marcelo Correa",
   "main": "main.js",
   "scripts": {
-    "dev": "electron .",
+    "dev": "node ../../node_modules/electron/cli.js .",
     "build": "node --check main.js && node --check preload.js",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win nsis",
-    "dist:mac": "electron-builder --mac dmg",
-    "dist:linux": "electron-builder --linux AppImage"
+    "dist": "node ../../node_modules/electron-builder/cli.js",
+    "dist:win": "node ../../node_modules/electron-builder/cli.js --win nsis",
+    "dist:mac": "node ../../node_modules/electron-builder/cli.js --mac dmg",
+    "dist:linux": "node ../../node_modules/electron-builder/cli.js --linux AppImage"
   },
   "dependencies": {
     "@devhttp/local-executor": "*"

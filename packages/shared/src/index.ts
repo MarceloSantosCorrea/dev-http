@@ -1,6 +1,19 @@
 export type Role = "owner" | "admin" | "editor" | "viewer";
 export type WorkspaceInviteStatus = "pending" | "accepted" | "declined" | "revoked";
 export type NotificationType = "workspace_invite";
+export type RealtimeEntityType =
+  | "workspace"
+  | "project"
+  | "collection"
+  | "request"
+  | "environment"
+  | "member"
+  | "invite"
+  | "notification"
+  | "profile"
+  | "preferences"
+  | "session";
+export type RealtimeAction = "created" | "updated" | "deleted" | "reordered" | "refreshed";
 
 export type HttpMethod =
   | "GET"
@@ -207,6 +220,25 @@ export interface Notification {
   readAt?: string;
   createdAt: string;
   invite?: WorkspaceInvite;
+}
+
+export interface WorkspaceRealtimeEvent {
+  workspaceId: string;
+  entityType: RealtimeEntityType;
+  action: RealtimeAction;
+  actorUserId: string;
+  occurredAt: string;
+  entityId?: string;
+}
+
+export interface UserRealtimeEvent {
+  userId: string;
+  entityType: RealtimeEntityType;
+  action: RealtimeAction;
+  actorUserId: string;
+  occurredAt: string;
+  workspaceId?: string;
+  entityId?: string;
 }
 
 export interface PostmanImportResult {

@@ -23,10 +23,13 @@ import type {
   WorkspaceInvite,
   WorkspaceMember,
   WorkspaceMembership,
+  UserRealtimeEvent,
+  WorkspaceRealtimeEvent,
 } from "@devhttp/shared";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -135,7 +138,10 @@ type NotificationWithRelations = Prisma.NotificationGetPayload<{
 
 @Injectable()
 export class StoreService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RealtimeService) private readonly realtime: RealtimeService,
+  ) {}
 
   async getUserPreferences(userId: string) {
     const preference = await this.prisma.userPreference.findUnique({
@@ -166,10 +172,17 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       sidebarCollapsed: saved.sidebarCollapsed,
       themeMode: saved.themeMode as "light" | "dark" | "system",
     };
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      entityType: "preferences",
+      action: "updated",
+    });
+    return result;
   }
 
   async listWorkspacesForUser(userId: string) {
@@ -250,12 +263,20 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       token,
       user: this.sanitizeUser(user),
       workspaceId,
       workspaces: await this.listWorkspacesForUser(userId),
     };
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      entityType: "workspace",
+      action: "created",
+      workspaceId,
+    });
+    return result;
   }
 
   async getBootstrap(userId: string, workspaceId: string) {
@@ -410,7 +431,14 @@ export class StoreService {
 
     await this.createNotificationsForPendingInvites(updated);
 
-    return this.sanitizeUser(updated);
+    const result = this.sanitizeUser(updated);
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      entityType: "profile",
+      action: "updated",
+    });
+    return result;
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
@@ -436,7 +464,14 @@ export class StoreService {
       where: { userId },
     });
 
-    return { passwordChanged: true };
+    const result = { passwordChanged: true };
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      entityType: "session",
+      action: "updated",
+    });
+    return result;
   }
 
   async listNotifications(userId: string): Promise<Notification[]> {
@@ -472,7 +507,14 @@ export class StoreService {
       },
     });
 
-    return { notificationId, read: true };
+    const result = { notificationId, read: true };
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      entityType: "notification",
+      action: "updated",
+    });
+    return result;
   }
 
   async listWorkspaceMembers(userId: string, workspaceId: string): Promise<WorkspaceMember[]> {
@@ -578,7 +620,25 @@ export class StoreService {
       await this.ensureInviteNotification(existingUser.id, invite);
     }
 
-    return this.toWorkspaceInvite(invite);
+    const result = this.toWorkspaceInvite(invite);
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId,
+      entityType: "invite",
+      entityId: invite.id,
+      action: "created",
+    });
+    if (existingUser) {
+      this.emitUserChanged({
+        userId: existingUser.id,
+        actorUserId,
+        workspaceId,
+        entityType: "invite",
+        entityId: invite.id,
+        action: "created",
+      });
+    }
+    return result;
   }
 
   async revokeWorkspaceInvite(actorUserId: string, workspaceId: string, inviteId: string) {
@@ -616,7 +676,29 @@ export class StoreService {
       },
     });
 
-    return this.toWorkspaceInvite(updated);
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: updated.email },
+      select: { id: true },
+    });
+    const result = this.toWorkspaceInvite(updated);
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId,
+      entityType: "invite",
+      entityId: inviteId,
+      action: "deleted",
+    });
+    if (existingUser) {
+      this.emitUserChanged({
+        userId: existingUser.id,
+        actorUserId,
+        workspaceId,
+        entityType: "invite",
+        entityId: inviteId,
+        action: "deleted",
+      });
+    }
+    return result;
   }
 
   async acceptWorkspaceInvite(userId: string, inviteId: string) {
@@ -672,12 +754,28 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       inviteId,
       accepted: true,
       workspaceId: invite.workspaceId,
       workspaces: await this.listWorkspacesForUser(userId),
     };
+    this.emitWorkspaceChanged({
+      workspaceId: invite.workspaceId,
+      actorUserId: userId,
+      entityType: "member",
+      entityId: userId,
+      action: existingMembership ? "updated" : "created",
+    });
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      workspaceId: invite.workspaceId,
+      entityType: "workspace",
+      entityId: invite.workspaceId,
+      action: "updated",
+    });
+    return result;
   }
 
   async declineWorkspaceInvite(userId: string, inviteId: string) {
@@ -688,6 +786,7 @@ export class StoreService {
         id: true,
         email: true,
         status: true,
+        workspaceId: true,
       },
     });
     if (!invite || invite.status !== "pending") {
@@ -716,10 +815,26 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       inviteId,
       declined: true,
     };
+    this.emitWorkspaceChanged({
+      workspaceId: invite.workspaceId,
+      actorUserId: userId,
+      entityType: "invite",
+      entityId: inviteId,
+      action: "updated",
+    });
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      workspaceId: invite.workspaceId,
+      entityType: "invite",
+      entityId: inviteId,
+      action: "updated",
+    });
+    return result;
   }
 
   async updateWorkspaceMemberRole(
@@ -779,11 +894,27 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       user: this.sanitizeUser(updated.user),
       role: updated.role as WorkspaceMember["role"],
       createdAt: updated.createdAt.toISOString(),
     };
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId,
+      entityType: "member",
+      entityId: memberUserId,
+      action: "updated",
+    });
+    this.emitUserChanged({
+      userId: memberUserId,
+      actorUserId,
+      workspaceId,
+      entityType: "workspace",
+      entityId: workspaceId,
+      action: "updated",
+    });
+    return result;
   }
 
   async removeWorkspaceMember(actorUserId: string, workspaceId: string, memberUserId: string) {
@@ -825,10 +956,26 @@ export class StoreService {
       },
     });
 
-    return {
+    const result = {
       userId: memberUserId,
       removed: true,
     };
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId,
+      entityType: "member",
+      entityId: memberUserId,
+      action: "deleted",
+    });
+    this.emitUserChanged({
+      userId: memberUserId,
+      actorUserId,
+      workspaceId,
+      entityType: "workspace",
+      entityId: workspaceId,
+      action: "updated",
+    });
+    return result;
   }
 
   async listProjects(userId: string, workspaceId: string) {
@@ -857,7 +1004,15 @@ export class StoreService {
       },
     });
 
-    return this.toWorkspace(workspace);
+    const result = this.toWorkspace(workspace);
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId: userId,
+      entityType: "workspace",
+      entityId: workspaceId,
+      action: "updated",
+    });
+    return result;
   }
 
   async createWorkspace(userId: string, input: { name: string }): Promise<WorkspaceMembership> {
@@ -868,7 +1023,16 @@ export class StoreService {
     await this.prisma.membership.create({
       data: { userId, workspaceId, role: "owner" },
     });
-    return { workspace: this.toWorkspace(workspace), role: "owner" };
+    const result = { workspace: this.toWorkspace(workspace), role: "owner" } satisfies WorkspaceMembership;
+    this.emitUserChanged({
+      userId,
+      actorUserId: userId,
+      workspaceId,
+      entityType: "workspace",
+      entityId: workspaceId,
+      action: "created",
+    });
+    return result;
   }
 
   async getProject(userId: string, projectId: string) {
@@ -910,7 +1074,15 @@ export class StoreService {
       },
     });
 
-    return this.toProject(project);
+    const result = this.toProject(project);
+    this.emitWorkspaceChanged({
+      workspaceId,
+      actorUserId: userId,
+      entityType: "project",
+      entityId: project.id,
+      action: "created",
+    });
+    return result;
   }
 
   async updateProject(
@@ -941,7 +1113,15 @@ export class StoreService {
       data,
     });
 
-    return this.toProject(project);
+    const result = this.toProject(project);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "project",
+      entityId: projectId,
+      action: "updated",
+    });
+    return result;
   }
 
   async removeProject(userId: string, projectId: string) {
@@ -960,10 +1140,18 @@ export class StoreService {
       where: { id: projectId },
     });
 
-    return {
+    const result = {
       projectId,
       removed: true,
     };
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "project",
+      entityId: projectId,
+      action: "deleted",
+    });
+    return result;
   }
 
   async createCollection(
@@ -993,7 +1181,15 @@ export class StoreService {
       },
     });
 
-    return this.toCollection(collection);
+    const result = this.toCollection(collection);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "collection",
+      entityId: collection.id,
+      action: "created",
+    });
+    return result;
   }
 
   async updateCollection(
@@ -1025,7 +1221,15 @@ export class StoreService {
       },
     });
 
-    return this.toCollection(updated);
+    const result = this.toCollection(updated);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "collection",
+      entityId: collectionId,
+      action: "updated",
+    });
+    return result;
   }
 
   async reorderCollections(userId: string, projectId: string, ids: string[]) {
@@ -1041,7 +1245,14 @@ export class StoreService {
       ),
     );
 
-    return { reordered: true };
+    const result = { reordered: true };
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "collection",
+      action: "reordered",
+    });
+    return result;
   }
 
   async reorderRequests(userId: string, projectId: string, ids: string[]) {
@@ -1057,7 +1268,14 @@ export class StoreService {
       ),
     );
 
-    return { reordered: true };
+    const result = { reordered: true };
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "request",
+      action: "reordered",
+    });
+    return result;
   }
 
   async reorderEnvironments(userId: string, projectId: string, ids: string[]) {
@@ -1073,7 +1291,14 @@ export class StoreService {
       ),
     );
 
-    return { reordered: true };
+    const result = { reordered: true };
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "environment",
+      action: "reordered",
+    });
+    return result;
   }
 
   async saveEnvironment(
@@ -1101,7 +1326,15 @@ export class StoreService {
           variables: this.variablesToJson(payload.variables),
         },
       });
-      return this.toEnvironment(environment);
+      const result = this.toEnvironment(environment);
+      this.emitWorkspaceChanged({
+        workspaceId: projectWorkspace.workspaceId,
+        actorUserId: userId,
+        entityType: "environment",
+        entityId: payload.id,
+        action: "updated",
+      });
+      return result;
     }
 
     const environment = await this.prisma.environment.create({
@@ -1114,7 +1347,15 @@ export class StoreService {
       },
     });
 
-    return this.toEnvironment(environment);
+    const result = this.toEnvironment(environment);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "environment",
+      entityId: environment.id,
+      action: "created",
+    });
+    return result;
   }
 
   async saveRequest(
@@ -1160,7 +1401,15 @@ export class StoreService {
         },
       });
 
-      return this.toRequest(request);
+      const result = this.toRequest(request);
+      this.emitWorkspaceChanged({
+        workspaceId: projectWorkspace.workspaceId,
+        actorUserId: userId,
+        entityType: "request",
+        entityId: payload.id,
+        action: "updated",
+      });
+      return result;
     }
 
     const request = await this.prisma.request.create({
@@ -1180,7 +1429,15 @@ export class StoreService {
       },
     });
 
-    return this.toRequest(request);
+    const result = this.toRequest(request);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "request",
+      entityId: request.id,
+      action: "created",
+    });
+    return result;
   }
 
   async updateRequest(
@@ -1212,7 +1469,15 @@ export class StoreService {
       },
     });
 
-    return this.toRequest(updated);
+    const result = this.toRequest(updated);
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "request",
+      entityId: requestId,
+      action: "updated",
+    });
+    return result;
   }
 
   async getEnvironment(environmentId?: string) {
@@ -1235,7 +1500,16 @@ export class StoreService {
           variables: this.variablesToJson(variables),
         },
       });
-      return this.toEnvironment(environment);
+      const result = this.toEnvironment(environment);
+      const projectWorkspace = await this.getProjectWorkspace(environment.projectId);
+      this.emitWorkspaceChanged({
+        workspaceId: projectWorkspace.workspaceId,
+        actorUserId: "system",
+        entityType: "environment",
+        entityId: environment.id,
+        action: "updated",
+      });
+      return result;
     } catch {
       throw new NotFoundException("Ambiente não encontrado.");
     }
@@ -1325,7 +1599,7 @@ export class StoreService {
       }
     }
 
-    return {
+    const result = {
       importedCount: imported.length,
       collectionsCreated,
       requests: imported,
@@ -1333,6 +1607,14 @@ export class StoreService {
       detectedVariables: Array.from(detectedVariables).sort((left, right) => left.localeCompare(right)),
       environmentImported,
     };
+    this.emitWorkspaceChanged({
+      workspaceId: projectWorkspace.workspaceId,
+      actorUserId: userId,
+      entityType: "project",
+      entityId: projectId,
+      action: "refreshed",
+    });
+    return result;
   }
 
   async exportProject(projectId: string) {
@@ -2088,6 +2370,20 @@ export class StoreService {
 
   private createSessionExpiry() {
     return new Date(Date.now() + SESSION_TTL_MS);
+  }
+
+  private emitWorkspaceChanged(event: Omit<WorkspaceRealtimeEvent, "occurredAt">) {
+    this.realtime.emitWorkspaceChanged({
+      ...event,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  private emitUserChanged(event: Omit<UserRealtimeEvent, "occurredAt">) {
+    this.realtime.emitUserChanged({
+      ...event,
+      occurredAt: new Date().toISOString(),
+    });
   }
 
   private toWorkspace(workspace: { id: string; name: string }): Workspace {

@@ -137,6 +137,14 @@ textarea {
   resize: vertical;
 }
 
+.desktop-titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.desktop-titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* Method pills in request list */
 .method-pill {
   display: inline-flex;

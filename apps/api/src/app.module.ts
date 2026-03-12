@@ -10,6 +10,8 @@ import { PreferencesController } from "./preferences/preferences.controller";
 import { PrismaService } from "./prisma/prisma.service";
 import { ProjectsController } from "./projects/projects.controller";
 import { ProjectsService } from "./projects/projects.service";
+import { RealtimeGateway } from "./realtime/realtime.gateway";
+import { RealtimeService } from "./realtime/realtime.service";
 import { StoreService } from "./store/store.service";
 import { UsersController } from "./users/users.controller";
 import { WorkspacesController } from "./workspaces/workspaces.controller";
@@ -25,6 +27,14 @@ import { WorkspacesController } from "./workspaces/workspaces.controller";
     UsersController,
     NotificationsController,
   ],
-  providers: [PrismaService, StoreService, AuthService, ProjectsService, ExecutionService],
+  providers: [
+    PrismaService,
+    StoreService,
+    AuthService,
+    ProjectsService,
+    ExecutionService,
+    RealtimeService,
+    RealtimeGateway,
+  ],
 })
 export class AppModule {}

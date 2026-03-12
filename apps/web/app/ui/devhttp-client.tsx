@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { createPortal } from "react-dom";
 import { Bell, ChevronDown, Copy, ExternalLink, GripVertical, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -24,10 +32,12 @@ import type {
   RequestDefinition,
   User,
   UserPreferences,
+  UserRealtimeEvent,
   Variable,
   WorkspaceInvite,
   WorkspaceMember,
   WorkspaceMembership,
+  WorkspaceRealtimeEvent,
 } from "@devhttp/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -43,6 +53,7 @@ import {
   isLocalAgentRequiredError,
   LOCAL_AGENT_REQUIRED_MESSAGE,
 } from "@/lib/local-agent";
+import { createRealtimeSocket } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -120,12 +131,24 @@ type ResponseCardError = {
   message: string;
 };
 
+type RemoteConflictState = {
+  hasRemoteConflict: boolean;
+  remoteConflictAt?: string;
+  remoteConflictReason?: string;
+};
+
 type DesktopRequestTabSnapshot = {
   type: "request";
   tabId: string;
   draft: BootstrapRequest;
   savedSnapshot: string;
   isDirty: boolean;
+};
+
+type RealtimeRequestTabSnapshot = DesktopRequestTabSnapshot & {
+  execution: ExecutionResponse | null;
+  responseError: ResponseCardError | null;
+  isExecuting: boolean;
 };
 
 type DesktopEnvironmentTabSnapshot = {
@@ -153,6 +176,10 @@ type DesktopWorkspaceSnapshot = {
   savedEnvironmentSnapshot: string;
 };
 
+type RealtimeWorkspaceSnapshot = Omit<DesktopWorkspaceSnapshot, "openTabs"> & {
+  openTabs: Array<RealtimeRequestTabSnapshot | DesktopEnvironmentTabSnapshot>;
+};
+
 type RequestEditorTab = {
   tabId: string;
   type: "request";
@@ -163,13 +190,13 @@ type RequestEditorTab = {
   isSaving: boolean;
   isDirty: boolean;
   savedSnapshot: string;
-};
+} & RemoteConflictState;
 
 type EnvironmentEditorTab = {
   tabId: string;
   type: "environment";
   environmentId: string;
-};
+} & RemoteConflictState;
 
 type EditorTab = RequestEditorTab | EnvironmentEditorTab;
 
@@ -196,6 +223,7 @@ type WorkspaceUiState = {
   responseView?: "response" | "console";
   bootstrap: BootstrapResponse;
   savedEnvironmentSnapshot: string;
+  hasEnvironmentRemoteConflict?: boolean;
 };
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -281,7 +309,17 @@ function serializeRequestSnapshot(draft: BootstrapRequest) {
 function createRequestEditorTab(
   draft: BootstrapRequest,
   overrides: Partial<
-    Pick<RequestEditorTab, "tabId" | "execution" | "responseError" | "isExecuting" | "isSaving">
+    Pick<
+      RequestEditorTab,
+      | "tabId"
+      | "execution"
+      | "responseError"
+      | "isExecuting"
+      | "isSaving"
+      | "hasRemoteConflict"
+      | "remoteConflictAt"
+      | "remoteConflictReason"
+    >
   > = {},
 ): RequestEditorTab {
   return {
@@ -294,6 +332,23 @@ function createRequestEditorTab(
     isSaving: overrides.isSaving ?? false,
     isDirty: false,
     savedSnapshot: serializeRequestSnapshot(draft),
+    hasRemoteConflict: overrides.hasRemoteConflict ?? false,
+    remoteConflictAt: overrides.remoteConflictAt,
+    remoteConflictReason: overrides.remoteConflictReason,
+  };
+}
+
+function createEnvironmentEditorTab(
+  environmentId: string,
+  overrides: Partial<Pick<EnvironmentEditorTab, "tabId" | "hasRemoteConflict" | "remoteConflictAt" | "remoteConflictReason">> = {},
+): EnvironmentEditorTab {
+  return {
+    tabId: overrides.tabId ?? environmentId,
+    type: "environment",
+    environmentId,
+    hasRemoteConflict: overrides.hasRemoteConflict ?? false,
+    remoteConflictAt: overrides.remoteConflictAt,
+    remoteConflictReason: overrides.remoteConflictReason,
   };
 }
 
@@ -400,6 +455,7 @@ function mergeEnvironmentDrafts(
 function resolveRestoredRequestDraft(
   bootstrap: BootstrapResponse,
   draft: BootstrapRequest,
+  preferLocalDraft: boolean,
 ): BootstrapRequest | null {
   const project =
     bootstrap.projects.find((item) => item.id === draft.projectId) ??
@@ -424,18 +480,39 @@ function resolveRestoredRequestDraft(
       ? draft.collectionId
       : persistedRequest?.collectionId ?? project.collections[0]?.id;
 
+  if (!persistedRequest) {
+    return {
+      ...defaultRequest(project.id, fallbackCollectionId),
+      ...draft,
+      projectId: project.id,
+      collectionId: fallbackCollectionId,
+    };
+  }
+
+  if (!preferLocalDraft) {
+    return {
+      ...persistedRequest,
+      projectId: project.id,
+      collectionId: fallbackCollectionId,
+      updatedAt: persistedRequest.updatedAt,
+    };
+  }
+
   return {
-    ...(persistedRequest ?? defaultRequest(project.id, fallbackCollectionId)),
+    ...persistedRequest,
     ...draft,
     projectId: project.id,
     collectionId: fallbackCollectionId,
-    updatedAt: persistedRequest?.updatedAt ?? draft.updatedAt,
+    updatedAt: persistedRequest.updatedAt,
   };
 }
 
 function restoreWorkspaceUiState(
   bootstrap: BootstrapResponse,
-  snapshot: DesktopWorkspaceSnapshot | null,
+  snapshot: DesktopWorkspaceSnapshot | RealtimeWorkspaceSnapshot | null,
+  options?: {
+    realtimeEvent?: WorkspaceRealtimeEvent;
+  },
 ): WorkspaceUiState | null {
   if (
     !snapshot ||
@@ -456,18 +533,46 @@ function restoreWorkspaceUiState(
         project.environments.some((environment) => environment.id === tab.environmentId),
       );
       return environmentExists
-        ? [{ tabId: tab.tabId, type: "environment", environmentId: tab.environmentId }]
+        ? [createEnvironmentEditorTab(tab.environmentId, { tabId: tab.tabId })]
         : [];
     }
 
-    const draft = resolveRestoredRequestDraft(bootstrapWithEnvironmentDrafts, tab.draft);
+    const draft = resolveRestoredRequestDraft(
+      bootstrapWithEnvironmentDrafts,
+      tab.draft,
+      tab.isDirty,
+    );
     if (!draft) {
       return [];
     }
 
-    const restored = createRequestEditorTab(draft, { tabId: tab.tabId });
-    restored.savedSnapshot = tab.savedSnapshot || serializeRequestSnapshot(draft);
-    restored.isDirty = tab.isDirty || serializeRequestSnapshot(draft) !== restored.savedSnapshot;
+    const restored = createRequestEditorTab(draft, {
+      tabId: tab.tabId,
+      execution: "execution" in tab ? tab.execution : null,
+      responseError: "responseError" in tab ? tab.responseError : null,
+      isExecuting: "isExecuting" in tab ? tab.isExecuting : false,
+    });
+    const currentSnapshot = serializeRequestSnapshot(draft);
+    restored.savedSnapshot = tab.isDirty ? tab.savedSnapshot || currentSnapshot : currentSnapshot;
+    restored.isDirty = tab.isDirty;
+    const persistedRequest =
+      draft.id
+        ? bootstrapWithEnvironmentDrafts.projects
+            .flatMap((project) => project.requests)
+            .find((request) => request.id === draft.id) ?? null
+        : null;
+    const persistedSnapshot = persistedRequest ? serializeRequestSnapshot(persistedRequest) : null;
+    if (
+      options?.realtimeEvent?.entityType === "request" &&
+      options.realtimeEvent.entityId === draft.id &&
+      restored.isDirty &&
+      persistedSnapshot &&
+      persistedSnapshot !== restored.savedSnapshot
+    ) {
+      restored.hasRemoteConflict = true;
+      restored.remoteConflictAt = options.realtimeEvent.occurredAt;
+      restored.remoteConflictReason = "A request foi alterada remotamente.";
+    }
     return [restored];
   });
 
@@ -551,6 +656,17 @@ function restoreWorkspaceUiState(
         selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
           null,
       ),
+    hasEnvironmentRemoteConflict:
+      options?.realtimeEvent?.entityType === "environment" &&
+      options.realtimeEvent.entityId === selectedEnvironmentId &&
+      JSON.stringify(
+        snapshot.environmentDrafts.find((environment) => environment.id === selectedEnvironmentId) ?? null,
+      ) !== snapshot.savedEnvironmentSnapshot &&
+      snapshot.savedEnvironmentSnapshot !==
+        JSON.stringify(
+          selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
+            null,
+        ),
   };
 }
 
@@ -578,6 +694,43 @@ function buildDesktopWorkspaceSnapshot(
             draft: tab.draft,
             savedSnapshot: tab.savedSnapshot,
             isDirty: tab.isDirty,
+          }
+        : {
+            type: "environment",
+            tabId: tab.tabId,
+            environmentId: tab.environmentId,
+          },
+    ),
+  };
+}
+
+function buildRealtimeWorkspaceSnapshot(
+  userId: string,
+  workspaceId: string,
+  bootstrap: BootstrapResponse,
+  openTabs: EditorTab[],
+  input: Omit<
+    RealtimeWorkspaceSnapshot,
+    "schemaVersion" | "userId" | "workspaceId" | "openTabs" | "environmentDrafts"
+  >,
+): RealtimeWorkspaceSnapshot {
+  return {
+    schemaVersion: DESKTOP_SNAPSHOT_SCHEMA_VERSION,
+    userId,
+    workspaceId,
+    ...input,
+    environmentDrafts: bootstrap.projects.flatMap((project) => project.environments),
+    openTabs: openTabs.map((tab) =>
+      tab.type === "request"
+        ? {
+            type: "request",
+            tabId: tab.tabId,
+            draft: tab.draft,
+            savedSnapshot: tab.savedSnapshot,
+            isDirty: tab.isDirty,
+            execution: tab.execution,
+            responseError: tab.responseError,
+            isExecuting: tab.isExecuting,
           }
         : {
             type: "environment",
@@ -1412,6 +1565,11 @@ function applyTheme(themeMode: ThemeMode) {
   document.documentElement.classList.remove("dark", "light");
   document.documentElement.classList.add(nextTheme);
   localStorage.setItem("devhttp-theme", themeMode);
+  void window.devHttpDesktop?.setTitleBarTheme?.(nextTheme);
+}
+
+function isDesktopTitleBarInteractiveTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest("[data-titlebar-no-drag='true']"));
 }
 
 function emptyProfileForm(user?: User | null): ProfileFormState {
@@ -1695,6 +1853,10 @@ export function DevHttpClient() {
   const [hasDesktopBridge, setHasDesktopBridge] = useState(
     () => typeof window !== "undefined" && Boolean(window.devHttpDesktop?.executeLocalRequest),
   );
+  const desktopPlatform =
+    typeof window !== "undefined" ? (window.devHttpDesktop?.platform ?? null) : null;
+  const usesNativeWindowControls = hasDesktopBridge && desktopPlatform !== "darwin";
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [hasLocalAgent, setHasLocalAgent] = useState(false);
   const [localAgentToken, setLocalAgentToken] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -1725,7 +1887,10 @@ export function DevHttpClient() {
   const isRequestResponseResizingRef = useRef(false);
   const requestResponseStartYRef = useRef(0);
   const requestResponseStartRatioRef = useRef(0);
+  const titleBarPointerIdRef = useRef<number | null>(null);
+  const isTitleBarDraggingRef = useRef(false);
   const [savedEnvironmentSnapshot, setSavedEnvironmentSnapshot] = useState("");
+  const [environmentConflictId, setEnvironmentConflictId] = useState("");
   const [isEnvironmentSaving, setIsEnvironmentSaving] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [savedThemeMode, setSavedThemeMode] = useState<ThemeMode>("system");
@@ -1759,6 +1924,43 @@ export function DevHttpClient() {
   const skipNextProjectResetRef = useRef(false);
   const desktopSnapshotReadyRef = useRef(false);
   const desktopSnapshotSaveTimeoutRef = useRef<number | null>(null);
+  const realtimeSocketRef = useRef<ReturnType<typeof createRealtimeSocket> | null>(null);
+  const realtimeRefreshInFlightRef = useRef(false);
+  const latestRealtimeStateRef = useRef<{
+    auth: AuthResponse | null;
+    bootstrap: BootstrapResponse | null;
+    openTabs: EditorTab[];
+    activeTabId: string;
+    selectedProjectId: string;
+    selectedCollectionId: string;
+    selectedEnvironmentId: string;
+    activeTab: "headers" | "queryParams" | "body" | "script";
+    expandedCollectionIds: string[];
+    sidebarCollapsed: boolean;
+    sidebarWidth: number;
+    requestPaneRatio: number;
+    responseView: "response" | "console";
+    savedEnvironmentSnapshot: string;
+    isSettingsOpen: boolean;
+    settingsTab: SettingsTab;
+  }>({
+    auth: null,
+    bootstrap: null,
+    openTabs: [],
+    activeTabId: "",
+    selectedProjectId: "",
+    selectedCollectionId: "",
+    selectedEnvironmentId: "",
+    activeTab: "headers",
+    expandedCollectionIds: [],
+    sidebarCollapsed: false,
+    sidebarWidth: 320,
+    requestPaneRatio: 0.58,
+    responseView: "response",
+    savedEnvironmentSnapshot: "",
+    isSettingsOpen: false,
+    settingsTab: "profile",
+  });
 
   const selectedProject = useMemo(
     () => bootstrap?.projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -1829,8 +2031,129 @@ export function DevHttpClient() {
         ) ?? null
       : null;
 
+  function handleDesktopTitleBarDoubleClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!hasDesktopBridge || desktopPlatform === "darwin") {
+      return;
+    }
+
+    if (isDesktopTitleBarInteractiveTarget(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+    void window.devHttpDesktop?.maximizeWindow();
+  }
+
+  function handleDesktopTitleBarPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!hasDesktopBridge || event.button !== 0) {
+      return;
+    }
+
+    if (isDesktopTitleBarInteractiveTarget(event.target)) {
+      return;
+    }
+
+    if (!isWindowMaximized) {
+      return;
+    }
+
+    titleBarPointerIdRef.current = event.pointerId;
+    isTitleBarDraggingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    void window.devHttpDesktop?.beginTitleBarDrag({
+      screenX: event.screenX,
+      screenY: event.screenY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      viewportWidth: window.innerWidth,
+    });
+  }
+
+  function handleDesktopTitleBarPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!isTitleBarDraggingRef.current || titleBarPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    void window.devHttpDesktop?.updateTitleBarDrag({
+      screenX: event.screenX,
+      screenY: event.screenY,
+    });
+  }
+
+  function finishDesktopTitleBarDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!isTitleBarDraggingRef.current || titleBarPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    isTitleBarDraggingRef.current = false;
+    titleBarPointerIdRef.current = null;
+    void window.devHttpDesktop?.endTitleBarDrag();
+  }
+
+  useEffect(() => {
+    latestRealtimeStateRef.current = {
+      auth,
+      bootstrap,
+      openTabs,
+      activeTabId,
+      selectedProjectId,
+      selectedCollectionId,
+      selectedEnvironmentId,
+      activeTab,
+      expandedCollectionIds,
+      sidebarCollapsed,
+      sidebarWidth,
+      requestPaneRatio,
+      responseView,
+      savedEnvironmentSnapshot,
+      isSettingsOpen,
+      settingsTab,
+    };
+  }, [
+    activeTab,
+    activeTabId,
+    auth,
+    bootstrap,
+    expandedCollectionIds,
+    isSettingsOpen,
+    openTabs,
+    requestPaneRatio,
+    responseView,
+    savedEnvironmentSnapshot,
+    selectedCollectionId,
+    selectedEnvironmentId,
+    selectedProjectId,
+    settingsTab,
+    sidebarCollapsed,
+    sidebarWidth,
+  ]);
+
   useEffect(() => {
     setHasDesktopBridge(typeof window !== "undefined" && Boolean(window.devHttpDesktop?.executeLocalRequest));
+  }, []);
+
+  useEffect(() => {
+    if (!hasDesktopBridge) return;
+    void window.devHttpDesktop?.isMaximized().then(setIsWindowMaximized);
+    window.devHttpDesktop?.onMaximizeChange(setIsWindowMaximized);
+  }, [hasDesktopBridge]);
+
+  useEffect(() => {
+    return () => {
+      if (!isTitleBarDraggingRef.current) {
+        return;
+      }
+
+      isTitleBarDraggingRef.current = false;
+      titleBarPointerIdRef.current = null;
+      void window.devHttpDesktop?.endTitleBarDrag();
+    };
   }, []);
 
   useEffect(() => {
@@ -1905,6 +2228,7 @@ export function DevHttpClient() {
   useEffect(() => {
     if (!auth) {
       setBootstrap(null);
+      setEnvironmentConflictId("");
       desktopSnapshotReadyRef.current = false;
       return;
     }
@@ -1969,6 +2293,9 @@ export function DevHttpClient() {
         setRequestPaneRatio(nextUiState.requestPaneRatio ?? 0.58);
         setResponseView(nextUiState.responseView ?? "response");
         setSavedEnvironmentSnapshot(nextUiState.savedEnvironmentSnapshot);
+        setEnvironmentConflictId(
+          nextUiState.hasEnvironmentRemoteConflict ? nextUiState.selectedEnvironmentId : "",
+        );
         desktopSnapshotReadyRef.current = true;
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "Falha ao carregar workspace.");
@@ -1989,6 +2316,47 @@ export function DevHttpClient() {
     })
       .then((items) => setNotifications(items))
       .catch(() => {});
+  }, [auth]);
+
+  useEffect(() => {
+    if (!auth) {
+      realtimeSocketRef.current?.disconnect();
+      realtimeSocketRef.current = null;
+      return;
+    }
+
+    const socket = createRealtimeSocket(API_BASE_URL);
+    realtimeSocketRef.current = socket;
+
+    socket.on("workspace.changed", (event) => {
+      const current = latestRealtimeStateRef.current;
+      if (event.workspaceId !== current.auth?.workspaceId) {
+        return;
+      }
+      void refreshWorkspaceFromServer(event);
+    });
+
+    socket.on("user.changed", (event) => {
+      const current = latestRealtimeStateRef.current;
+      if (event.userId !== current.auth?.user.id) {
+        return;
+      }
+      void refreshUserRealtimeState(event);
+    });
+
+    socket.on("connect", () => {
+      if (latestRealtimeStateRef.current.bootstrap) {
+        void refreshWorkspaceFromServer();
+      }
+      void refreshNotifications();
+    });
+
+    return () => {
+      socket.disconnect();
+      if (realtimeSocketRef.current === socket) {
+        realtimeSocketRef.current = null;
+      }
+    };
   }, [auth]);
 
   useEffect(() => {
@@ -2304,6 +2672,9 @@ export function DevHttpClient() {
               savedSnapshot,
               isDirty: false,
               isSaving: false,
+              hasRemoteConflict: false,
+              remoteConflictAt: undefined,
+              remoteConflictReason: undefined,
             }
           : tab,
       ));
@@ -2377,6 +2748,7 @@ export function DevHttpClient() {
         : current,
     );
     setSavedEnvironmentSnapshot(JSON.stringify(nextEnvironment));
+    setEnvironmentConflictId("");
 
     try {
       await requestJson<Environment>(`/projects/${selectedProject.id}/environments`, {
@@ -2431,10 +2803,6 @@ export function DevHttpClient() {
         });
       }
 
-      if (useLocalExecution && result.scriptResult?.updatedVariables && selectedEnvironmentId) {
-        await persistUpdatedEnvironmentVariables(result.scriptResult.updatedVariables);
-      }
-
       setOpenTabs((prev) => prev.map((tab) =>
         tab.tabId === activeTabId && tab.type === "request"
           ? { ...tab, execution: result, responseError: null, isExecuting: false }
@@ -2447,6 +2815,10 @@ export function DevHttpClient() {
             ? "Request executada localmente pelo DevHttp Agent."
             : "Request executada.",
       );
+
+      if (useLocalExecution && result.scriptResult?.updatedVariables && selectedEnvironmentId) {
+        void persistUpdatedEnvironmentVariables(result.scriptResult.updatedVariables);
+      }
     } catch (error) {
       if (isLocalAgentRequiredError(error) || (error instanceof Error && error.message === LOCAL_AGENT_REQUIRED_MESSAGE)) {
         setHasLocalAgent(false);
@@ -2586,7 +2958,7 @@ export function DevHttpClient() {
         setActiveTabId(firstImportedRequest.id);
       } else if (importedEnvironment) {
         const environmentTabId = `env-${importedEnvironment.id}`;
-        setOpenTabs([{ tabId: environmentTabId, type: "environment", environmentId: importedEnvironment.id }]);
+        setOpenTabs([createEnvironmentEditorTab(importedEnvironment.id, { tabId: environmentTabId })]);
         setActiveTabId(environmentTabId);
       }
 
@@ -2696,6 +3068,7 @@ export function DevHttpClient() {
       );
       setSelectedEnvironmentId(saved.id);
       setSavedEnvironmentSnapshot(JSON.stringify(saved));
+      setEnvironmentConflictId("");
       toast.success("Ambiente salvo.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar ambiente.");
@@ -2782,6 +3155,140 @@ export function DevHttpClient() {
     }
   }
 
+  async function refreshWorkspaceFromServer(event?: WorkspaceRealtimeEvent) {
+    const current = latestRealtimeStateRef.current;
+    if (!current.auth || !current.bootstrap || realtimeRefreshInFlightRef.current) {
+      return;
+    }
+
+    realtimeRefreshInFlightRef.current = true;
+    try {
+      const freshBootstrap = normalizeBootstrap(
+        await requestJson<BootstrapResponse>(
+          `/workspaces/${current.auth.workspaceId}/bootstrap`,
+          { headers: authHeaders(current.auth.token) },
+        ),
+      );
+      const snapshot = buildRealtimeWorkspaceSnapshot(
+        current.auth.user.id,
+        current.bootstrap.workspace.id,
+        current.bootstrap,
+        current.openTabs,
+        {
+          selectedProjectId: current.selectedProjectId,
+          selectedCollectionId: current.selectedCollectionId,
+          selectedEnvironmentId: current.selectedEnvironmentId,
+          activeTabId: current.activeTabId,
+          activeTab: current.activeTab,
+          expandedCollectionIds: current.expandedCollectionIds,
+          sidebarCollapsed: current.sidebarCollapsed,
+          sidebarWidth: current.sidebarWidth,
+          requestPaneRatio: current.requestPaneRatio,
+          responseView: current.responseView,
+          savedEnvironmentSnapshot: current.savedEnvironmentSnapshot,
+        },
+      );
+      const restoredUiState =
+        restoreWorkspaceUiState(freshBootstrap, snapshot, { realtimeEvent: event }) ??
+        buildDefaultWorkspaceUiState(freshBootstrap);
+
+      setBootstrap(restoredUiState.bootstrap);
+      setSelectedProjectId(restoredUiState.selectedProjectId);
+      setSelectedCollectionId(restoredUiState.selectedCollectionId);
+      setSelectedEnvironmentId(restoredUiState.selectedEnvironmentId);
+      setExpandedCollectionIds(restoredUiState.expandedCollectionIds);
+      setOpenTabs(restoredUiState.openTabs);
+      setActiveTabId(restoredUiState.activeTabId);
+      setActiveTab(restoredUiState.activeTab);
+      setSidebarCollapsed(restoredUiState.sidebarCollapsed ?? current.sidebarCollapsed);
+      setSidebarWidth(restoredUiState.sidebarWidth ?? current.sidebarWidth);
+      setRequestPaneRatio(restoredUiState.requestPaneRatio ?? current.requestPaneRatio);
+      setResponseView(restoredUiState.responseView ?? current.responseView);
+      setSavedEnvironmentSnapshot(restoredUiState.savedEnvironmentSnapshot);
+      setEnvironmentConflictId(
+        restoredUiState.hasEnvironmentRemoteConflict ? restoredUiState.selectedEnvironmentId : "",
+      );
+
+      const requestConflictCount = restoredUiState.openTabs.filter(
+        (tab) => tab.type === "request" && tab.hasRemoteConflict,
+      ).length;
+      if (requestConflictCount > 0 || restoredUiState.hasEnvironmentRemoteConflict) {
+        toast("Atualizações remotas recebidas.", {
+          description:
+            requestConflictCount > 0
+              ? "Seu draft local foi preservado; revise os itens marcados com conflito."
+              : "Seu ambiente em edição foi alterado em outro dispositivo.",
+        });
+      }
+
+      if (current.isSettingsOpen && current.settingsTab === "workspace") {
+        await loadWorkspaceManagement();
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      realtimeRefreshInFlightRef.current = false;
+    }
+  }
+
+  async function refreshUserRealtimeState(event?: UserRealtimeEvent) {
+    const current = latestRealtimeStateRef.current;
+    if (!current.auth) {
+      return;
+    }
+
+    try {
+      const session = await requestJson<SessionResponse>("/auth/me");
+      const nextWorkspaceId = session.workspaces.some(
+        (membership) => membership.workspace.id === current.auth?.workspaceId,
+      )
+        ? current.auth.workspaceId
+        : session.workspaceId;
+
+      setAuth({
+        ...session,
+        workspaceId: nextWorkspaceId,
+      });
+      try {
+        const prefs = await requestJson<UserPreferences>("/preferences", {
+          headers: authHeaders(),
+        });
+        setSidebarCollapsed(prefs.sidebarCollapsed ?? false);
+        const nextThemeMode = prefs.themeMode ?? "system";
+        setThemeMode(nextThemeMode);
+        setSavedThemeMode(nextThemeMode);
+        applyTheme(nextThemeMode);
+      } catch {
+        // noop
+      }
+      await refreshNotifications();
+
+      if (
+        current.isSettingsOpen &&
+        current.settingsTab === "workspace" &&
+        current.bootstrap &&
+        nextWorkspaceId === current.bootstrap.workspace.id
+      ) {
+        await loadWorkspaceManagement();
+      }
+
+      if (nextWorkspaceId !== current.auth.workspaceId) {
+        setOpenTabs([]);
+        setActiveTabId("");
+        setSelectedProjectId("");
+        setSelectedCollectionId("");
+        setSelectedEnvironmentId("");
+      } else if (
+        event?.entityType === "profile" ||
+        event?.workspaceId === current.bootstrap?.workspace.id
+      ) {
+        await refreshWorkspaceFromServer();
+      }
+    } catch {
+      setAuth(null);
+    }
+  }
+
   function handleWorkspaceChange(workspaceId: string) {
     setAuth((current) =>
       current
@@ -2797,6 +3304,7 @@ export function DevHttpClient() {
     setSelectedProjectId("");
     setSelectedCollectionId("");
     setSelectedEnvironmentId("");
+    setEnvironmentConflictId("");
   }
 
   async function handleCreateWorkspaceInvite() {
@@ -3639,7 +4147,7 @@ export function DevHttpClient() {
     const tabId = `env-${environmentId}`;
     setOpenTabs((prev) => {
       if (prev.some((t) => t.tabId === tabId)) return prev;
-      return [...prev, { tabId, type: "environment", environmentId }];
+      return [...prev, createEnvironmentEditorTab(environmentId, { tabId })];
     });
     setActiveTabId(tabId);
     setSelectedEnvironmentId(environmentId);
@@ -4010,9 +4518,71 @@ export function DevHttpClient() {
 
   return (
     <>
+      <div className="h-screen flex flex-col overflow-hidden">
+        {hasDesktopBridge && (
+          <div
+            className={cn(
+              "shrink-0 h-9 flex items-center bg-sidebar border-b border-border/30 select-none",
+              desktopPlatform !== "darwin" && "desktop-titlebar-drag",
+            )}
+            onDoubleClick={handleDesktopTitleBarDoubleClick}
+            onPointerDown={handleDesktopTitleBarPointerDown}
+            onPointerMove={handleDesktopTitleBarPointerMove}
+            onPointerUp={finishDesktopTitleBarDrag}
+            onPointerCancel={finishDesktopTitleBarDrag}
+            style={{ touchAction: isWindowMaximized ? "none" : "auto" }}
+          >
+            <div
+              className="flex items-center flex-1 px-3"
+              style={
+                desktopPlatform === "darwin"
+                  ? { paddingLeft: 76 }
+                  : usesNativeWindowControls
+                    ? { paddingRight: 138 }
+                    : undefined
+              }
+            >
+              <span className="text-sm font-semibold">DevHttp</span>
+            </div>
+            {!usesNativeWindowControls && desktopPlatform !== "darwin" && (
+              <div
+                className="flex h-full desktop-titlebar-no-drag"
+                data-titlebar-no-drag="true"
+              >
+                <button
+                  onClick={() => window.devHttpDesktop?.minimizeWindow()}
+                  data-titlebar-no-drag="true"
+                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors desktop-titlebar-no-drag"
+                  title="Minimizar"
+                  type="button"
+                >
+                  ─
+                </button>
+                <button
+                  onClick={() => window.devHttpDesktop?.maximizeWindow()}
+                  data-titlebar-no-drag="true"
+                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors desktop-titlebar-no-drag"
+                  title={isWindowMaximized ? "Restaurar" : "Maximizar"}
+                  type="button"
+                >
+                  {isWindowMaximized ? "❐" : "□"}
+                </button>
+                <button
+                  onClick={() => window.devHttpDesktop?.closeWindow()}
+                  data-titlebar-no-drag="true"
+                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-red-500/80 hover:text-white transition-colors desktop-titlebar-no-drag"
+                  title="Fechar"
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       <main
         className={cn(
-          "h-screen overflow-hidden grid transition-[grid-template-columns] duration-200 max-[1180px]:grid-cols-1",
+          "flex-1 overflow-hidden grid transition-[grid-template-columns] duration-200 max-[1180px]:grid-cols-1",
           sidebarCollapsed && "grid-cols-[0px_minmax(0,1fr)]",
         )}
         style={sidebarCollapsed ? undefined : { gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` }}
@@ -4421,13 +4991,29 @@ export function DevHttpClient() {
                     <span title={fullLabel} className="max-w-[140px] truncate">
                       {truncateTabLabel(fullLabel)}
                     </span>
-                    {tab.type === "request" && tab.isDirty ? (
+                    {tab.type === "request" && tab.hasRemoteConflict ? (
+                      <span
+                        className="h-2 w-2 rounded-full bg-red-500 shrink-0"
+                        title="Conflito com alteração remota"
+                      />
+                    ) : null}
+                    {tab.type === "request" && !tab.hasRemoteConflict && tab.isDirty ? (
                       <span
                         className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
                         title="Alterações não salvas"
                       />
                     ) : null}
-                    {tab.type === "environment" && isEnvironmentDirty && tab.environmentId === selectedEnvironmentId ? (
+                    {tab.type === "environment" &&
+                    environmentConflictId === tab.environmentId ? (
+                      <span
+                        className="h-2 w-2 rounded-full bg-red-500 shrink-0"
+                        title="Conflito com alteração remota"
+                      />
+                    ) : null}
+                    {tab.type === "environment" &&
+                    environmentConflictId !== tab.environmentId &&
+                    isEnvironmentDirty &&
+                    tab.environmentId === selectedEnvironmentId ? (
                       <span
                         className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
                         title="Alterações não salvas"
@@ -4845,6 +5431,7 @@ export function DevHttpClient() {
 
         </section>
       </main>
+      </div>
 
       <CreateItemModal
         open={createModalType !== null}

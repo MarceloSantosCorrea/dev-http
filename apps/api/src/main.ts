@@ -7,22 +7,10 @@ import { json, urlencoded } from "express";
 import { resolve } from "node:path";
 
 import { AppModule } from "./app.module";
+import { getAllowedOrigins } from "./http-config";
 
 config({ path: resolve(process.cwd(), ".env") });
 config({ path: resolve(process.cwd(), "../../.env"), override: false });
-
-function getAllowedOrigins() {
-  const configured = (process.env.CORS_ORIGIN ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  if (configured.length > 0) {
-    return configured;
-  }
-
-  return ["http://localhost:3000", "http://127.0.0.1:3000"];
-}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

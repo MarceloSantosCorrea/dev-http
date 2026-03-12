@@ -7,6 +7,7 @@ export const LOCAL_AGENT_REQUIRED_MESSAGE =
   "Destino local detectado. Instale ou inicie o DevHttp Agent para acessar localhost e rede privada no navegador.";
 
 const LOCAL_AGENT_SESSION_EXPIRED_CODE = "SESSION_EXPIRED";
+const LOCAL_AGENT_SESSION_EXPIRED_MESSAGE = "Sessão do DevHttp Agent inválida ou expirada.";
 
 type AgentHandshakeResponse = {
   token: string;
@@ -40,6 +41,53 @@ type LocalAgentExecutionResult = {
 
 export function isLocalAgentRequiredError(error: unknown): error is LocalAgentError {
   return error instanceof LocalAgentError && error.kind === "agent_required";
+}
+
+function isSessionExpiredPayload(payload: AgentErrorPayload, status: number) {
+  const normalizedMessage = payload.message?.trim().toLowerCase() ?? "";
+  const expectedMessage = LOCAL_AGENT_SESSION_EXPIRED_MESSAGE.toLowerCase();
+
+  return (
+    payload.code === LOCAL_AGENT_SESSION_EXPIRED_CODE ||
+    ((status === 400 || status === 401 || status === 403) && normalizedMessage.includes(expectedMessage))
+  );
+}
+
+async function toLocalAgentError(response: Response) {
+  const text = await response.text();
+
+  try {
+    const parsed = JSON.parse(text) as AgentErrorPayload;
+    if (isSessionExpiredPayload(parsed, response.status)) {
+      return new LocalAgentError(
+        "agent_session_expired",
+        parsed.message || LOCAL_AGENT_SESSION_EXPIRED_MESSAGE,
+        parsed.code || LOCAL_AGENT_SESSION_EXPIRED_CODE,
+      );
+    }
+
+    return new LocalAgentError(
+      "agent_request_failed",
+      parsed.message || "Falha ao executar request pelo DevHttp Agent.",
+      parsed.code,
+    );
+  } catch {
+    if (
+      (response.status === 400 || response.status === 401 || response.status === 403) &&
+      text.toLowerCase().includes(LOCAL_AGENT_SESSION_EXPIRED_MESSAGE.toLowerCase())
+    ) {
+      return new LocalAgentError(
+        "agent_session_expired",
+        text || LOCAL_AGENT_SESSION_EXPIRED_MESSAGE,
+        LOCAL_AGENT_SESSION_EXPIRED_CODE,
+      );
+    }
+
+    return new LocalAgentError(
+      "agent_request_failed",
+      text || "Falha ao executar request pelo DevHttp Agent.",
+    );
+  }
 }
 
 async function requestAgent(path: string, init: RequestInit) {
@@ -89,28 +137,7 @@ async function executeLocalAgentRequestOnce(
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    try {
-      const parsed = JSON.parse(text) as AgentErrorPayload;
-      if (parsed.code === LOCAL_AGENT_SESSION_EXPIRED_CODE) {
-        throw new LocalAgentError(
-          "agent_session_expired",
-          parsed.message || "Sessão do DevHttp Agent inválida ou expirada.",
-          parsed.code,
-        );
-      }
-
-      throw new LocalAgentError(
-        "agent_request_failed",
-        parsed.message || "Falha ao executar request pelo DevHttp Agent.",
-        parsed.code,
-      );
-    } catch (error) {
-      if (error instanceof LocalAgentError) {
-        throw error;
-      }
-      throw new LocalAgentError("agent_request_failed", text || "Falha ao executar request pelo DevHttp Agent.");
-    }
+    throw await toLocalAgentError(response);
   }
 
   return (await response.json()) as ExecutionResponse;
