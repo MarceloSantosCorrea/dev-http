@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
-import { ExternalLink } from "lucide-react";
 import type { AuthResponse, RegisterPayload, User, WorkspaceMembership } from "@devhttp/shared";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -14,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
-const DESKTOP_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
+const DESKTOP_DOWNLOAD_URL = "/api/download/desktop";
 
 type SessionResponse = {
   user: User;
@@ -214,11 +213,8 @@ export function AuthScreen({
           {!isDesktopRuntime ? (
             <a
               href={DESKTOP_DOWNLOAD_URL}
-              target="_blank"
-              rel="noreferrer"
               className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
             >
-              <ExternalLink className="size-4" />
               Baixar app para desktop
             </a>
           ) : null}

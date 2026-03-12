@@ -10,10 +10,10 @@ import {
   useTransition,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bell, ChevronDown, Copy, ExternalLink, GripVertical, Pencil } from "lucide-react";
+import { Bell, ChevronDown, Copy, GripVertical, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
-import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type {
   AuthResponse,
@@ -59,8 +59,8 @@ import { toast } from "sonner";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
-const DESKTOP_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
-const AGENT_DOWNLOAD_URL = "https://github.com/MarceloSantosCorrea/dev-http/releases";
+const DESKTOP_DOWNLOAD_URL = "/api/download/desktop";
+const AGENT_DOWNLOAD_URL = "/api/download/agent";
 
 type BootstrapCollection = {
   id: string;
@@ -1841,6 +1841,100 @@ function SortableEnvironmentItem({
       >
         <span className="text-[0.6rem] shrink-0 opacity-50">○</span>
         <span className="truncate min-w-0">{environment.name}</span>
+      </button>
+    </div>
+  );
+}
+
+function SortableTab({
+  tab,
+  isActive,
+  envName,
+  fullLabel,
+  method,
+  isEnvironmentDirty,
+  environmentConflictId,
+  selectedEnvironmentId,
+  onActivate,
+  onClose,
+}: {
+  tab: EditorTab;
+  isActive: boolean;
+  envName: string;
+  fullLabel: string;
+  method: string | null;
+  isEnvironmentDirty: boolean;
+  environmentConflictId: string;
+  selectedEnvironmentId: string;
+  onActivate: () => void;
+  onClose: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: tab.tabId,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={onActivate}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 cursor-grab active:cursor-grabbing whitespace-nowrap text-xs shrink-0 transition-colors select-none",
+        isActive
+          ? "border-primary text-foreground bg-primary/5"
+          : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/3",
+      )}
+    >
+      {method && (
+        <span className={`method-pill ${method.toLowerCase()} !text-[0.6rem]`}>
+          {method}
+        </span>
+      )}
+      <span title={fullLabel} className="max-w-[140px] truncate">
+        {truncateTabLabel(fullLabel)}
+      </span>
+      {tab.type === "request" && tab.hasRemoteConflict ? (
+        <span
+          className="h-2 w-2 rounded-full bg-red-500 shrink-0"
+          title="Conflito com alteração remota"
+        />
+      ) : null}
+      {tab.type === "request" && !tab.hasRemoteConflict && tab.isDirty ? (
+        <span
+          className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
+          title="Alterações não salvas"
+        />
+      ) : null}
+      {tab.type === "environment" &&
+      environmentConflictId === tab.environmentId ? (
+        <span
+          className="h-2 w-2 rounded-full bg-red-500 shrink-0"
+          title="Conflito com alteração remota"
+        />
+      ) : null}
+      {tab.type === "environment" &&
+      environmentConflictId !== tab.environmentId &&
+      isEnvironmentDirty &&
+      tab.environmentId === selectedEnvironmentId ? (
+        <span
+          className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
+          title="Alterações não salvas"
+        />
+      ) : null}
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        className="ml-0.5 flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive transition-opacity"
+        title="Fechar"
+      >
+        ×
       </button>
     </div>
   );
@@ -4290,6 +4384,16 @@ export function DevHttpClient() {
     }
   }
 
+  function handleTabDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setOpenTabs((current) => {
+      const oldIndex = current.findIndex((t) => t.tabId === String(active.id));
+      const newIndex = current.findIndex((t) => t.tabId === String(over.id));
+      return arrayMove(current, oldIndex, newIndex);
+    });
+  }
+
   async function handleRequestDragEnd(
     projectId: string,
     collectionId: string,
@@ -5006,75 +5110,40 @@ export function DevHttpClient() {
           ) : null}
 
           {openTabs.length > 0 && (
-            <div className="flex items-stretch overflow-x-auto -mx-3 border-b border-border/60 shrink-0">
-              {openTabs.map((tab) => {
-                const isActive = tab.tabId === activeTabId;
-                const envName =
-                  tab.type === "environment"
-                    ? (selectedProject?.environments.find((e) => e.id === tab.environmentId)?.name ?? "Ambiente")
-                    : "";
-                const fullLabel = tab.type === "request" ? tab.draft.name : envName;
-                const method = tab.type === "request" ? tab.draft.method : null;
+            <DndContext collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
+              <SortableContext
+                items={openTabs.map((t) => t.tabId)}
+                strategy={horizontalListSortingStrategy}
+              >
+                <div className="flex items-stretch overflow-x-auto -mx-3 border-b border-border/60 shrink-0">
+                  {openTabs.map((tab) => {
+                    const isActive = tab.tabId === activeTabId;
+                    const envName =
+                      tab.type === "environment"
+                        ? (selectedProject?.environments.find((e) => e.id === tab.environmentId)?.name ?? "Ambiente")
+                        : "";
+                    const fullLabel = tab.type === "request" ? tab.draft.name : envName;
+                    const method = tab.type === "request" ? tab.draft.method : null;
 
-                return (
-                  <div
-                    key={tab.tabId}
-                    onClick={() => activateTab(tab.tabId)}
-                    className={cn(
-                      "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 cursor-pointer whitespace-nowrap text-xs shrink-0 transition-colors select-none",
-                      isActive
-                        ? "border-primary text-foreground bg-primary/5"
-                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/3",
-                    )}
-                  >
-                    {method && (
-                      <span className={`method-pill ${method.toLowerCase()} !text-[0.6rem]`}>
-                        {method}
-                      </span>
-                    )}
-                    <span title={fullLabel} className="max-w-[140px] truncate">
-                      {truncateTabLabel(fullLabel)}
-                    </span>
-                    {tab.type === "request" && tab.hasRemoteConflict ? (
-                      <span
-                        className="h-2 w-2 rounded-full bg-red-500 shrink-0"
-                        title="Conflito com alteração remota"
+                    return (
+                      <SortableTab
+                        key={tab.tabId}
+                        tab={tab}
+                        isActive={isActive}
+                        envName={envName}
+                        fullLabel={fullLabel}
+                        method={method}
+                        isEnvironmentDirty={isEnvironmentDirty}
+                        environmentConflictId={environmentConflictId}
+                        selectedEnvironmentId={selectedEnvironmentId}
+                        onActivate={() => activateTab(tab.tabId)}
+                        onClose={() => requestCloseTab(tab.tabId)}
                       />
-                    ) : null}
-                    {tab.type === "request" && !tab.hasRemoteConflict && tab.isDirty ? (
-                      <span
-                        className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
-                        title="Alterações não salvas"
-                      />
-                    ) : null}
-                    {tab.type === "environment" &&
-                    environmentConflictId === tab.environmentId ? (
-                      <span
-                        className="h-2 w-2 rounded-full bg-red-500 shrink-0"
-                        title="Conflito com alteração remota"
-                      />
-                    ) : null}
-                    {tab.type === "environment" &&
-                    environmentConflictId !== tab.environmentId &&
-                    isEnvironmentDirty &&
-                    tab.environmentId === selectedEnvironmentId ? (
-                      <span
-                        className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
-                        title="Alterações não salvas"
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); requestCloseTab(tab.tabId); }}
-                      className="ml-0.5 flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-destructive transition-opacity"
-                      title="Fechar"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
 
           {openTabs.length === 0 ? (
@@ -5383,20 +5452,14 @@ export function DevHttpClient() {
                           <div className="flex flex-wrap gap-3">
                             <a
                               href={AGENT_DOWNLOAD_URL}
-                              target="_blank"
-                              rel="noreferrer"
                               className={buttonVariants({ variant: "default" })}
                             >
-                              <ExternalLink className="size-4" />
                               Baixar DevHttp Agent
                             </a>
                             <a
                               href={DESKTOP_DOWNLOAD_URL}
-                              target="_blank"
-                              rel="noreferrer"
                               className={buttonVariants({ variant: "outline" })}
                             >
-                              <ExternalLink className="size-4" />
                               Baixar DevHttp Desktop
                             </a>
                           </div>
