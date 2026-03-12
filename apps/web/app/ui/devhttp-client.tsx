@@ -226,6 +226,17 @@ type WorkspaceUiState = {
   hasEnvironmentRemoteConflict?: boolean;
 };
 
+type DesktopUpdateCheckResult = {
+  available: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  tag?: string;
+  releaseUrl?: string;
+  assetUrl?: string;
+  publishedAt?: string;
+  skipped?: boolean;
+};
+
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const DESKTOP_SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -1924,6 +1935,7 @@ export function DevHttpClient() {
   const skipNextProjectResetRef = useRef(false);
   const desktopSnapshotReadyRef = useRef(false);
   const desktopSnapshotSaveTimeoutRef = useRef<number | null>(null);
+  const desktopUpdateCheckStartedRef = useRef(false);
   const realtimeSocketRef = useRef<ReturnType<typeof createRealtimeSocket> | null>(null);
   const realtimeRefreshInFlightRef = useRef(false);
   const latestRealtimeStateRef = useRef<{
@@ -2358,6 +2370,38 @@ export function DevHttpClient() {
       }
     };
   }, [auth]);
+
+  useEffect(() => {
+    if (
+      !hasDesktopBridge ||
+      isSessionLoading ||
+      !window.devHttpDesktop?.checkForUpdates ||
+      desktopUpdateCheckStartedRef.current
+    ) {
+      return;
+    }
+
+    desktopUpdateCheckStartedRef.current = true;
+
+    void window.devHttpDesktop.checkForUpdates().then((update: DesktopUpdateCheckResult) => {
+      if (!update.available || !update.latestVersion) {
+        return;
+      }
+
+      const targetUrl = update.assetUrl || update.releaseUrl;
+      toast("Nova versão do DevHttp disponível.", {
+        description: `Versão ${update.latestVersion} disponível para download.`,
+        action: targetUrl && window.devHttpDesktop?.openUpdateUrl
+          ? {
+              label: "Atualizar",
+              onClick: () => {
+                void window.devHttpDesktop?.openUpdateUrl(targetUrl);
+              },
+            }
+          : undefined,
+      });
+    });
+  }, [hasDesktopBridge, isSessionLoading]);
 
   useEffect(() => {
     if (!selectedProject) {

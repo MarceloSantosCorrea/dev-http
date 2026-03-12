@@ -1,5 +1,16 @@
 import type { ExecutionResponse, LocalExecutionRequest } from "@devhttp/shared";
 
+type DesktopUpdateCheckResult = {
+  available: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  tag?: string;
+  releaseUrl?: string;
+  assetUrl?: string;
+  publishedAt?: string;
+  skipped?: boolean;
+};
+
 declare global {
   interface Window {
     devHttpDesktop?: {
@@ -26,6 +37,8 @@ declare global {
       }) => Promise<boolean>;
       endTitleBarDrag: () => Promise<boolean>;
       setTitleBarTheme: (theme: "light" | "dark") => Promise<boolean>;
+      checkForUpdates: () => Promise<DesktopUpdateCheckResult>;
+      openUpdateUrl: (url: string) => Promise<boolean>;
     };
   }
 }

@@ -11,6 +11,7 @@ if (process.platform === "linux") {
 
 const WORKSPACE_SNAPSHOT_FILE = "workspace-snapshots.json";
 const TITLE_BAR_HEIGHT = 36;
+const DESKTOP_RELEASES_API_URL = "https://api.github.com/repos/MarceloSantosCorrea/dev-http/releases";
 const TITLE_BAR_THEME = {
   dark: {
     color: "#09111e",
@@ -23,6 +24,124 @@ const TITLE_BAR_THEME = {
 };
 
 let titleBarDragState = null;
+
+function parseVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version).trim());
+  if (!match) {
+    return null;
+  }
+
+  return match.slice(1).map((segment) => Number.parseInt(segment, 10));
+}
+
+function compareVersions(left, right) {
+  const leftParts = parseVersion(left);
+  const rightParts = parseVersion(right);
+  if (!leftParts || !rightParts) {
+    return 0;
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] > rightParts[index]) {
+      return 1;
+    }
+    if (leftParts[index] < rightParts[index]) {
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+function resolveDesktopAssetUrl(release) {
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const extensionByPlatform = {
+    win32: ".exe",
+    darwin: ".dmg",
+    linux: ".AppImage",
+  };
+  const expectedExtension = extensionByPlatform[process.platform];
+  if (!expectedExtension) {
+    return null;
+  }
+
+  const matchingAsset = assets.find((asset) =>
+    typeof asset?.browser_download_url === "string" &&
+    typeof asset?.name === "string" &&
+    asset.name.endsWith(expectedExtension),
+  );
+
+  return matchingAsset?.browser_download_url ?? null;
+}
+
+async function checkForDesktopUpdates() {
+  const currentVersion = app.getVersion();
+  if (!app.isPackaged) {
+    return {
+      available: false,
+      currentVersion,
+      skipped: true,
+    };
+  }
+
+  try {
+    const response = await fetch(DESKTOP_RELEASES_API_URL, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "DevHttp-Desktop",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub releases request failed with status ${response.status}`);
+    }
+
+    const releases = await response.json();
+    if (!Array.isArray(releases)) {
+      throw new Error("Unexpected GitHub releases payload.");
+    }
+
+    const latestDesktopRelease = releases
+      .filter((release) =>
+        release &&
+        release.draft !== true &&
+        release.prerelease !== true &&
+        typeof release.tag_name === "string" &&
+        release.tag_name.startsWith("desktop-v"),
+      )
+      .map((release) => ({
+        tag: release.tag_name,
+        version: release.tag_name.replace(/^desktop-v/, ""),
+        releaseUrl: typeof release.html_url === "string" ? release.html_url : null,
+        publishedAt: typeof release.published_at === "string" ? release.published_at : null,
+        assetUrl: resolveDesktopAssetUrl(release),
+      }))
+      .filter((release) => parseVersion(release.version))
+      .sort((left, right) => compareVersions(right.version, left.version))[0];
+
+    if (!latestDesktopRelease || compareVersions(latestDesktopRelease.version, currentVersion) <= 0) {
+      return {
+        available: false,
+        currentVersion,
+      };
+    }
+
+    return {
+      available: true,
+      currentVersion,
+      latestVersion: latestDesktopRelease.version,
+      tag: latestDesktopRelease.tag,
+      releaseUrl: latestDesktopRelease.releaseUrl ?? undefined,
+      assetUrl: latestDesktopRelease.assetUrl ?? undefined,
+      publishedAt: latestDesktopRelease.publishedAt ?? undefined,
+    };
+  } catch (error) {
+    console.error("Failed to check desktop updates:", error);
+    return {
+      available: false,
+      currentVersion,
+    };
+  }
+}
 
 function getTargetUrl() {
   const desktopClientSuffix = "client=desktop";
@@ -243,6 +362,17 @@ ipcMain.handle("devhttp:window-end-titlebar-drag", () => {
 });
 ipcMain.handle("devhttp:set-titlebar-theme", (_event, theme) => {
   return setTitleBarTheme(theme);
+});
+ipcMain.handle("devhttp:check-for-updates", () => {
+  return checkForDesktopUpdates();
+});
+ipcMain.handle("devhttp:open-update-url", async (_event, url) => {
+  if (typeof url !== "string" || !url.trim()) {
+    return false;
+  }
+
+  await shell.openExternal(url);
+  return true;
 });
 
 ipcMain.handle("devhttp:execute-local-request", async (_event, payload) => {

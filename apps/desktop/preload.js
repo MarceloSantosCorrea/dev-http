@@ -25,4 +25,6 @@ contextBridge.exposeInMainWorld("devHttpDesktop", {
   updateTitleBarDrag: (payload) => ipcRenderer.invoke("devhttp:window-update-titlebar-drag", payload),
   endTitleBarDrag: () => ipcRenderer.invoke("devhttp:window-end-titlebar-drag"),
   setTitleBarTheme: (theme) => ipcRenderer.invoke("devhttp:set-titlebar-theme", theme),
+  checkForUpdates: () => ipcRenderer.invoke("devhttp:check-for-updates"),
+  openUpdateUrl: (url) => ipcRenderer.invoke("devhttp:open-update-url", url),
 });
