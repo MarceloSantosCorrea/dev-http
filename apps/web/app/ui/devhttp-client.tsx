@@ -1602,6 +1602,7 @@ function emptyPasswordForm(): PasswordFormState {
 function SortableRequestItem({
   request,
   isActive,
+  effectiveMethod,
   canRename,
   onSelect,
   onRename,
@@ -1609,6 +1610,7 @@ function SortableRequestItem({
 }: {
   request: BootstrapRequest;
   isActive: boolean;
+  effectiveMethod: string;
   canRename: boolean;
   onSelect: (req: BootstrapRequest) => void;
   onRename: (id: string, name: string) => void;
@@ -1647,8 +1649,8 @@ function SortableRequestItem({
         onClick={() => onSelect(request)}
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
       >
-        <span className={`method-pill ${request.method.toLowerCase()} !text-[0.55rem]`}>
-          {request.method}
+        <span className={`method-pill ${effectiveMethod.toLowerCase()} !text-[0.55rem]`}>
+          {effectiveMethod}
         </span>
         <span className="truncate min-w-0 text-[0.8rem]">{request.name}</span>
       </button>
@@ -1689,6 +1691,7 @@ function SortableCollectionItem({
   isSelected,
   canRename,
   activeTabId,
+  tabMethodByRequestId,
   onSelectCollection,
   onRenameCollection,
   onOpenMenu,
@@ -1703,6 +1706,7 @@ function SortableCollectionItem({
   isSelected: boolean;
   canRename: boolean;
   activeTabId: string;
+  tabMethodByRequestId: Map<string, string>;
   onSelectCollection: (id: string) => void;
   onRenameCollection: (id: string, name: string) => void;
   onOpenMenu: (id: string, x: number, y: number) => void;
@@ -1784,6 +1788,7 @@ function SortableCollectionItem({
                     key={request.id}
                     request={request}
                     isActive={activeTabId === request.id}
+                    effectiveMethod={tabMethodByRequestId.get(request.id) ?? request.method}
                     canRename={canRename}
                     onSelect={onSelectRequest}
                     onRename={onRenameRequest}
@@ -2090,6 +2095,16 @@ export function DevHttpClient() {
       project.name.toLowerCase().includes(search),
     );
   }, [bootstrap?.projects, projectSearch]);
+
+  const tabMethodByRequestId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const tab of openTabs) {
+      if (tab.type === "request" && tab.draft.id) {
+        map.set(tab.draft.id, tab.draft.method);
+      }
+    }
+    return map;
+  }, [openTabs]);
 
   const membershipRole = bootstrap?.membership.role as WorkspaceMember["role"] | undefined;
   const canRenameWorkspace = membershipRole === "owner" || membershipRole === "admin";
@@ -2437,6 +2452,14 @@ export function DevHttpClient() {
     socket.on("workspace.changed", (event) => {
       const current = latestRealtimeStateRef.current;
       if (event.workspaceId !== current.auth?.workspaceId) {
+        return;
+      }
+      // Eventos disparados pelo próprio usuário já foram tratados por saveRequestTab(),
+      // que atualiza o estado local otimisticamente (isDirty=false, hasRemoteConflict=false).
+      // Chamar refreshWorkspaceFromServer() aqui causaria race condition: o snapshot em
+      // latestRealtimeStateRef ainda tem isDirty=true (stale) e restoreWorkspaceUiState
+      // preservaria esse valor incorretamente, sobrescrevendo o estado correto do save.
+      if (event.actorUserId === current.auth?.user.id) {
         return;
       }
       void refreshWorkspaceFromServer(event);
@@ -4402,32 +4425,35 @@ export function DevHttpClient() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const project = bootstrap?.projects.find((p) => p.id === projectId);
-    if (!project) return;
+    let reorderedIds: string[] = [];
 
-    const collectionRequests = project.requests.filter((r) => r.collectionId === collectionId);
-    const oldIndex = collectionRequests.findIndex((r) => r.id === active.id);
-    const newIndex = collectionRequests.findIndex((r) => r.id === over.id);
-    const reordered = arrayMove(collectionRequests, oldIndex, newIndex);
-    const otherRequests = project.requests.filter((r) => r.collectionId !== collectionId);
-
-    setBootstrap((current) =>
-      current
-        ? {
-            ...current,
-            projects: current.projects.map((p) =>
-              p.id === projectId
-                ? { ...p, requests: [...otherRequests, ...reordered] }
-                : p,
-            ),
-          }
-        : current,
-    );
+    setBootstrap((current) => {
+      if (!current) return current;
+      const currentProject = current.projects.find((p) => p.id === projectId);
+      if (!currentProject) return current;
+      const collectionRequests = currentProject.requests.filter(
+        (r) => r.collectionId === collectionId,
+      );
+      const oldIndex = collectionRequests.findIndex((r) => r.id === active.id);
+      const newIndex = collectionRequests.findIndex((r) => r.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return current;
+      const reordered = arrayMove(collectionRequests, oldIndex, newIndex);
+      reorderedIds = reordered.map((r) => r.id);
+      const otherRequests = currentProject.requests.filter(
+        (r) => r.collectionId !== collectionId,
+      );
+      return {
+        ...current,
+        projects: current.projects.map((p) =>
+          p.id === projectId ? { ...p, requests: [...otherRequests, ...reordered] } : p,
+        ),
+      };
+    });
 
     try {
       await requestJson(`/projects/${projectId}/requests/reorder`, {
         method: "PATCH",
-        body: JSON.stringify({ ids: reordered.map((r) => r.id) }),
+        body: JSON.stringify({ ids: reorderedIds }),
       });
     } catch {
       toast.error("Falha ao reordenar requests.");
@@ -4964,6 +4990,7 @@ export function DevHttpClient() {
                                   isSelected={selectedCollectionId === collection.id}
                                   canRename={canRenameProjectEntities}
                                   activeTabId={activeTabId}
+                                  tabMethodByRequestId={tabMethodByRequestId}
                                   onSelectCollection={selectCollection}
                                   onRenameCollection={(id, name) =>
                                     openRenameModal("collection", id, name, project.id)
