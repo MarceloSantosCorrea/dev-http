@@ -61,6 +61,7 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
 const DESKTOP_DOWNLOAD_URL = "/api/download/desktop";
 const AGENT_DOWNLOAD_URL = "/api/download/agent";
+const CLIENT_INSTANCE_HEADER_NAME = "x-devhttp-client-instance";
 
 type BootstrapCollection = {
   id: string;
@@ -2050,6 +2051,13 @@ export function DevHttpClient() {
   const desktopUpdateCheckStartedRef = useRef(false);
   const realtimeSocketRef = useRef<ReturnType<typeof createRealtimeSocket> | null>(null);
   const realtimeRefreshInFlightRef = useRef(false);
+  const fetchPatchRestoreRef = useRef<(() => void) | null>(null);
+  const clientInstanceIdRef = useRef(
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2),
+  );
+
   const latestRealtimeStateRef = useRef<{
     auth: AuthResponse | null;
     bootstrap: BootstrapResponse | null;
@@ -2440,6 +2448,44 @@ export function DevHttpClient() {
   }, [auth, hasDesktopBridge]);
 
   useEffect(() => {
+    if (fetchPatchRestoreRef.current || typeof window === "undefined") {
+      return;
+    }
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const resolvedUrl = new URL(requestUrl, window.location.origin);
+      const apiUrl = new URL(API_BASE_URL, window.location.origin);
+      const shouldAttachHeader =
+        resolvedUrl.origin === apiUrl.origin &&
+        (resolvedUrl.pathname.startsWith("/api/") || resolvedUrl.pathname === "/api");
+      const headers = new Headers(init?.headers ?? (typeof input === "object" && "headers" in input ? input.headers : undefined));
+      if (shouldAttachHeader) {
+        headers.set(CLIENT_INSTANCE_HEADER_NAME, clientInstanceIdRef.current);
+      }
+      return originalFetch(input, {
+        ...init,
+        headers,
+      });
+    };
+
+    fetchPatchRestoreRef.current = () => {
+      window.fetch = originalFetch;
+      fetchPatchRestoreRef.current = null;
+    };
+
+    return () => {
+      fetchPatchRestoreRef.current?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!auth) {
       setNotifications([]);
       return;
@@ -2467,12 +2513,7 @@ export function DevHttpClient() {
       if (event.workspaceId !== current.auth?.workspaceId) {
         return;
       }
-      // Eventos disparados pelo próprio usuário já foram tratados por saveRequestTab(),
-      // que atualiza o estado local otimisticamente (isDirty=false, hasRemoteConflict=false).
-      // Chamar refreshWorkspaceFromServer() aqui causaria race condition: o snapshot em
-      // latestRealtimeStateRef ainda tem isDirty=true (stale) e restoreWorkspaceUiState
-      // preservaria esse valor incorretamente, sobrescrevendo o estado correto do save.
-      if (event.actorUserId === current.auth?.user.id) {
+      if (event.originInstanceId === clientInstanceIdRef.current) {
         return;
       }
       void refreshWorkspaceFromServer(event);
@@ -2481,6 +2522,9 @@ export function DevHttpClient() {
     socket.on("user.changed", (event) => {
       const current = latestRealtimeStateRef.current;
       if (event.userId !== current.auth?.user.id) {
+        return;
+      }
+      if (event.originInstanceId === clientInstanceIdRef.current) {
         return;
       }
       void refreshUserRealtimeState(event);

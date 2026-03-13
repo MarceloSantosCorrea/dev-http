@@ -30,6 +30,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { getRequestContext } from "../request-context";
 
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -157,6 +158,7 @@ export class StoreService {
   async saveUserPreferences(
     userId: string,
     prefs: { sidebarCollapsed?: boolean; themeMode?: "light" | "dark" | "system" },
+    originInstanceId?: string,
   ) {
     const current = await this.getUserPreferences(userId);
     const saved = await this.prisma.userPreference.upsert({
@@ -179,6 +181,7 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "preferences",
       action: "updated",
     });
@@ -198,7 +201,10 @@ export class StoreService {
     }));
   }
 
-  async register(input: { name?: string; email: string; password: string }): Promise<AuthResponse> {
+  async register(
+    input: { name?: string; email: string; password: string },
+    originInstanceId?: string,
+  ): Promise<AuthResponse> {
     const email = input.email.trim().toLowerCase();
     const name = input.name?.trim() || email.split("@")[0] || "Novo usuário";
     const password = input.password.trim();
@@ -272,6 +278,7 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "workspace",
       action: "created",
       workspaceId,
@@ -405,6 +412,7 @@ export class StoreService {
   async updateUserProfile(
     userId: string,
     input: { name: string; email: string; avatarUrl?: string | null },
+    originInstanceId?: string,
   ) {
     const name = input.name.trim();
     const email = input.email.trim().toLowerCase();
@@ -435,13 +443,19 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "profile",
       action: "updated",
     });
     return result;
   }
 
-  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    originInstanceId?: string,
+  ) {
     if (!currentPassword || !newPassword) {
       throw new BadRequestException("Senha atual e nova senha são obrigatórias.");
     }
@@ -468,6 +482,7 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "session",
       action: "updated",
     });
@@ -491,7 +506,7 @@ export class StoreService {
     return notifications.map((notification) => this.toNotification(notification));
   }
 
-  async markNotificationAsRead(userId: string, notificationId: string) {
+  async markNotificationAsRead(userId: string, notificationId: string, originInstanceId?: string) {
     const notification = await this.prisma.notification.findUnique({
       where: { id: notificationId },
       select: { id: true, userId: true, readAt: true },
@@ -511,6 +526,7 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "notification",
       action: "updated",
     });
@@ -555,6 +571,7 @@ export class StoreService {
     actorUserId: string,
     workspaceId: string,
     input: { email: string; role: "admin" | "editor" | "viewer" },
+    originInstanceId?: string,
   ) {
     await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
 
@@ -624,6 +641,7 @@ export class StoreService {
     this.emitWorkspaceChanged({
       workspaceId,
       actorUserId,
+      originInstanceId,
       entityType: "invite",
       entityId: invite.id,
       action: "created",
@@ -632,6 +650,7 @@ export class StoreService {
       this.emitUserChanged({
         userId: existingUser.id,
         actorUserId,
+        originInstanceId,
         workspaceId,
         entityType: "invite",
         entityId: invite.id,
@@ -641,7 +660,12 @@ export class StoreService {
     return result;
   }
 
-  async revokeWorkspaceInvite(actorUserId: string, workspaceId: string, inviteId: string) {
+  async revokeWorkspaceInvite(
+    actorUserId: string,
+    workspaceId: string,
+    inviteId: string,
+    originInstanceId?: string,
+  ) {
     await this.requireWorkspaceRole(actorUserId, workspaceId, ["owner", "admin"]);
 
     const invite = await this.prisma.workspaceInvite.findUnique({
@@ -684,6 +708,7 @@ export class StoreService {
     this.emitWorkspaceChanged({
       workspaceId,
       actorUserId,
+      originInstanceId,
       entityType: "invite",
       entityId: inviteId,
       action: "deleted",
@@ -692,6 +717,7 @@ export class StoreService {
       this.emitUserChanged({
         userId: existingUser.id,
         actorUserId,
+        originInstanceId,
         workspaceId,
         entityType: "invite",
         entityId: inviteId,
@@ -701,7 +727,7 @@ export class StoreService {
     return result;
   }
 
-  async acceptWorkspaceInvite(userId: string, inviteId: string) {
+  async acceptWorkspaceInvite(userId: string, inviteId: string, originInstanceId?: string) {
     const user = await this.findUserById(userId);
     const invite = await this.prisma.workspaceInvite.findUnique({
       where: { id: inviteId },
@@ -763,6 +789,7 @@ export class StoreService {
     this.emitWorkspaceChanged({
       workspaceId: invite.workspaceId,
       actorUserId: userId,
+      originInstanceId,
       entityType: "member",
       entityId: userId,
       action: existingMembership ? "updated" : "created",
@@ -770,6 +797,7 @@ export class StoreService {
     this.emitUserChanged({
       userId,
       actorUserId: userId,
+      originInstanceId,
       workspaceId: invite.workspaceId,
       entityType: "workspace",
       entityId: invite.workspaceId,
@@ -778,7 +806,7 @@ export class StoreService {
     return result;
   }
 
-  async declineWorkspaceInvite(userId: string, inviteId: string) {
+  async declineWorkspaceInvite(userId: string, inviteId: string, originInstanceId?: string) {
     const user = await this.findUserById(userId);
     const invite = await this.prisma.workspaceInvite.findUnique({
       where: { id: inviteId },
@@ -2373,15 +2401,19 @@ export class StoreService {
   }
 
   private emitWorkspaceChanged(event: Omit<WorkspaceRealtimeEvent, "occurredAt">) {
+    const { originInstanceId } = getRequestContext();
     this.realtime.emitWorkspaceChanged({
       ...event,
+      originInstanceId: event.originInstanceId ?? originInstanceId,
       occurredAt: new Date().toISOString(),
     });
   }
 
   private emitUserChanged(event: Omit<UserRealtimeEvent, "occurredAt">) {
+    const { originInstanceId } = getRequestContext();
     this.realtime.emitUserChanged({
       ...event,
+      originInstanceId: event.originInstanceId ?? originInstanceId,
       occurredAt: new Date().toISOString(),
     });
   }

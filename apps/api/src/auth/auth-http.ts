@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 export const SESSION_COOKIE_NAME = "devhttp_session";
 export const CSRF_COOKIE_NAME = "devhttp_csrf";
 export const CLIENT_HEADER_NAME = "x-devhttp-client";
+export const CLIENT_INSTANCE_HEADER_NAME = "x-devhttp-client-instance";
 export const DESKTOP_CLIENT_VALUE = "desktop";
 export const DESKTOP_SESSION_MAX_AGE_SECONDS = 90 * 24 * 60 * 60;
 
@@ -67,6 +68,10 @@ export function getCsrfHeaderToken(request: RequestLike) {
 
 export function isDesktopClient(request: RequestLike) {
   return toHeaderString(request.headers[CLIENT_HEADER_NAME]) === DESKTOP_CLIENT_VALUE;
+}
+
+export function getClientInstanceId(request: RequestLike) {
+  return toHeaderString(request.headers[CLIENT_INSTANCE_HEADER_NAME]) || undefined;
 }
 
 export function isSafeMethod(method: string | undefined) {

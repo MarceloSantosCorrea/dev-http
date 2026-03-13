@@ -227,6 +227,7 @@ export interface WorkspaceRealtimeEvent {
   entityType: RealtimeEntityType;
   action: RealtimeAction;
   actorUserId: string;
+  originInstanceId?: string;
   occurredAt: string;
   entityId?: string;
 }
@@ -236,6 +237,7 @@ export interface UserRealtimeEvent {
   entityType: RealtimeEntityType;
   action: RealtimeAction;
   actorUserId: string;
+  originInstanceId?: string;
   occurredAt: string;
   workspaceId?: string;
   entityId?: string;

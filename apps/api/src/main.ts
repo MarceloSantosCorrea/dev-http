@@ -7,13 +7,23 @@ import { json, urlencoded } from "express";
 import { resolve } from "node:path";
 
 import { AppModule } from "./app.module";
+import { getClientInstanceId } from "./auth/auth-http";
 import { getAllowedOrigins } from "./http-config";
+import { runWithRequestContext } from "./request-context";
 
 config({ path: resolve(process.cwd(), ".env") });
 config({ path: resolve(process.cwd(), "../../.env"), override: false });
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.use((request, _response, next) => {
+    runWithRequestContext(
+      {
+        originInstanceId: getClientInstanceId(request),
+      },
+      next,
+    );
+  });
   app.use(json({ limit: "10mb" }));
   app.use(urlencoded({ extended: true, limit: "10mb" }));
   const allowedOrigins = getAllowedOrigins();
