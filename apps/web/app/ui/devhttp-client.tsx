@@ -1886,16 +1886,28 @@ function SortableTab({
     <div
       ref={setNodeRef}
       style={style}
-      onClick={onActivate}
-      {...attributes}
-      {...listeners}
       className={cn(
-        "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 cursor-grab active:cursor-grabbing whitespace-nowrap text-xs shrink-0 transition-colors select-none",
+        "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 whitespace-nowrap text-xs shrink-0 transition-colors select-none",
         isActive
           ? "border-primary text-foreground bg-primary/5"
           : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/3",
       )}
     >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        onClick={(event) => event.stopPropagation()}
+        className="flex items-center justify-center w-4 h-4 opacity-0 group-hover:opacity-60 text-muted-foreground cursor-grab active:cursor-grabbing shrink-0"
+        title="Arrastar aba"
+      >
+        <GripVertical className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={onActivate}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+      >
       {method && (
         <span className={`method-pill ${method.toLowerCase()} !text-[0.6rem]`}>
           {method}
@@ -1932,6 +1944,7 @@ function SortableTab({
           title="Alterações não salvas"
         />
       ) : null}
+      </button>
       <button
         type="button"
         onPointerDown={(e) => e.stopPropagation()}
