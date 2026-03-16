@@ -16,7 +16,8 @@ config({ path: resolve(process.cwd(), "../../.env"), override: false });
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.use((request, _response, next) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  app.use((request: any, _response: any, next: any) => {
     runWithRequestContext(
       {
         originInstanceId: getClientInstanceId(request),

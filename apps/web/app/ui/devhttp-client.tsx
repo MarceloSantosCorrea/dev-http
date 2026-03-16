@@ -3043,9 +3043,8 @@ export function DevHttpClient() {
       bodyType: draftRequest.bodyType,
       body: draftRequest.body,
       formData: draftRequest.formData.filter((item) => item.key || item.value || item.src),
-              disabledAutoHeaders: draftRequest.disabledAutoHeaders ?? [],
-              disabledAutoHeaders: draftRequest.disabledAutoHeaders ?? [],
-              postResponseScript: draftRequest.postResponseScript,
+      disabledAutoHeaders: draftRequest.disabledAutoHeaders ?? [],
+      postResponseScript: draftRequest.postResponseScript,
     };
   }
 
