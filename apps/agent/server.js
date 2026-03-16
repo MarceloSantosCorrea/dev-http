@@ -194,10 +194,14 @@ function createAgentServer(overrides = {}) {
         });
         writeJson(request, response, 200, result);
       } catch (error) {
+        let resolvedError = error;
+        if (error instanceof AggregateError && Array.isArray(error.errors) && error.errors.length > 0) {
+          resolvedError = new Error(error.errors.map((e) => e?.message ?? String(e)).join("; "));
+        }
         writeJson(request, response, 400, {
           message:
-            error instanceof Error
-              ? error.message
+            resolvedError instanceof Error
+              ? resolvedError.message
               : "Falha ao executar a request pelo DevHttp Agent.",
           code:
             error && typeof error === "object" && "code" in error && typeof error.code === "string"

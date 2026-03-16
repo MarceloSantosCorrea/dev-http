@@ -376,10 +376,17 @@ ipcMain.handle("devhttp:open-update-url", async (_event, url) => {
 });
 
 ipcMain.handle("devhttp:execute-local-request", async (_event, payload) => {
-  return executeRequestLocally({
-    ...payload,
-    source: "desktop-local",
-  });
+  try {
+    return await executeRequestLocally({
+      ...payload,
+      source: "desktop-local",
+    });
+  } catch (error) {
+    if (error instanceof AggregateError && error.errors?.length > 0) {
+      throw new Error(error.errors.map((e) => e?.message ?? String(e)).join("; "));
+    }
+    throw error;
+  }
 });
 
 ipcMain.handle("devhttp:get-workspace-snapshot", async (_event, userId) => {
