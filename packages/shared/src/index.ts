@@ -29,6 +29,14 @@ export type BodyType = "json" | "text" | "form-urlencoded" | "form-data";
 export type FormDataFieldType = "text" | "file";
 export type ThemeMode = "light" | "dark" | "system";
 export type ExecutionSource = "server" | "desktop-local" | "agent-local";
+export type AutoHeaderKey =
+  | "host"
+  | "content-length"
+  | "content-type"
+  | "accept"
+  | "accept-encoding"
+  | "connection"
+  | "user-agent";
 
 export interface User {
   id: string;
@@ -129,6 +137,7 @@ export interface RequestDefinition {
   bodyType: BodyType;
   body: string;
   formData: FormDataField[];
+  disabledAutoHeaders?: AutoHeaderKey[];
   postResponseScript: string;
   updatedAt: string;
   order?: number;
@@ -144,6 +153,7 @@ export interface ExecutedRequest {
   bodyType: BodyType;
   body: string;
   formData: FormDataField[];
+  disabledAutoHeaders?: AutoHeaderKey[];
   postResponseScript?: string;
 }
 

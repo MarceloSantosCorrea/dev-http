@@ -1,6 +1,8 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import type {
+  AutoHeaderKey,
   ConsoleValue,
+  ExecutionSource,
   ExecutionResponse,
   FormDataField,
   RequestScriptLogEntry,
@@ -19,11 +21,13 @@ type TestCollector = Array<{ name: string; passed: boolean }>;
 type PreparedBody = {
   bodyBuffer?: Buffer;
   consoleBody: ConsoleValue;
+  inferredContentType?: string;
 };
 
 type PerformedRequest = {
   status: number;
   statusText: string;
+  requestHeaders: Record<string, string>;
   headers: Record<string, string>;
   bodyBuffer: Buffer;
   network: ConsoleValue;
@@ -46,6 +50,15 @@ type TlsSnapshot = {
   ephemeralKeyInfo: ConsoleValue;
   peerCertificate: ConsoleValue;
 } | null;
+
+const AUTO_ACCEPT = "*/*";
+const AUTO_ACCEPT_ENCODING = "gzip, deflate, br";
+const AUTO_CONNECTION = "keep-alive";
+const AUTO_USER_AGENTS: Record<ExecutionSource, string> = {
+  server: "DevHttp/1.0 (Server)",
+  "desktop-local": "DevHttp/1.0 (Desktop)",
+  "agent-local": "DevHttp/1.0 (Agent)",
+};
 
 @Injectable()
 export class ExecutionService {
@@ -70,12 +83,8 @@ export class ExecutionService {
       url.searchParams.append(key, value);
     }
 
-    const headers = this.buildHeaders(input.headers, variables);
-    const preparedBody = this.prepareBody(input, variables, headers);
-
-    if (preparedBody.bodyBuffer && !headers["content-length"]) {
-      headers["content-length"] = String(preparedBody.bodyBuffer.byteLength);
-    }
+    const preparedBody = this.prepareBody(input, variables);
+    const headers = this.resolveHeaders(input, variables, url, preparedBody, "server");
 
     const startedAt = performance.now();
     const response = await this.performRequest({
@@ -109,6 +118,7 @@ export class ExecutionService {
           Network: response.network,
           "Request Headers": {
             ...headers,
+            ...response.requestHeaders,
             ":path": `${url.pathname}${url.search}`,
             ":method": input.method,
             ":authority": url.host,
@@ -139,25 +149,16 @@ export class ExecutionService {
     return executionResponse;
   }
 
-  private buildHeaders(inputHeaders: ExecuteRequestDto["headers"], variables: Map<string, string>) {
-    const headers: Record<string, string> = {};
-    for (const item of inputHeaders.filter((header) => header.enabled && header.key.trim())) {
-      headers[item.key.toLowerCase()] = this.interpolate(item.value, variables);
-    }
-    return headers;
-  }
-
   private prepareBody(
     input: ExecuteRequestDto,
     variables: Map<string, string>,
-    headers: Record<string, string>,
   ): PreparedBody {
     if (["GET", "HEAD"].includes(input.method)) {
       return { consoleBody: null };
     }
 
     if (input.bodyType === "form-data") {
-      return this.prepareMultipartBody(input.formData ?? [], variables, headers);
+      return this.prepareMultipartBody(input.formData ?? [], variables);
     }
 
     const body = this.interpolate(input.body, variables);
@@ -165,23 +166,21 @@ export class ExecutionService {
       return { consoleBody: null };
     }
 
-    if (input.bodyType === "json" && !headers["content-type"]) {
-      headers["content-type"] = "application/json";
-    }
-    if (input.bodyType === "form-urlencoded" && !headers["content-type"]) {
-      headers["content-type"] = "application/x-www-form-urlencoded";
-    }
-
     return {
       bodyBuffer: Buffer.from(body, "utf8"),
       consoleBody: this.parseConsoleBody(body, input.bodyType === "json"),
+      inferredContentType:
+        input.bodyType === "json"
+          ? "application/json"
+          : input.bodyType === "form-urlencoded"
+            ? "application/x-www-form-urlencoded"
+            : undefined,
     };
   }
 
   private prepareMultipartBody(
     fields: FormDataField[],
     variables: Map<string, string>,
-    headers: Record<string, string>,
   ): PreparedBody {
     const enabledFields = fields.filter((entry) => entry.enabled && entry.key.trim());
     if (enabledFields.length === 0) {
@@ -240,15 +239,62 @@ export class ExecutionService {
     }
 
     chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-    headers["content-type"] = `multipart/form-data; boundary=${boundary}`;
-
     return {
       bodyBuffer: Buffer.concat(chunks),
       consoleBody: {
         type: "form-data",
         fields: consoleFields,
       },
+      inferredContentType: `multipart/form-data; boundary=${boundary}`,
     };
+  }
+
+  private resolveHeaders(
+    input: ExecuteRequestDto,
+    variables: Map<string, string>,
+    url: URL,
+    preparedBody: PreparedBody,
+    source: ExecutionSource,
+  ) {
+    const headers: Record<string, string> = {};
+
+    for (const item of input.headers.filter((header) => header.enabled && header.key.trim())) {
+      headers[item.key.toLowerCase()] = this.interpolate(item.value, variables);
+    }
+
+    const disabledAutoHeaders = new Set<AutoHeaderKey>(input.disabledAutoHeaders ?? []);
+    this.applyAutoHeader(headers, "host", url.host, disabledAutoHeaders);
+    this.applyAutoHeader(headers, "accept", AUTO_ACCEPT, disabledAutoHeaders);
+    this.applyAutoHeader(headers, "accept-encoding", AUTO_ACCEPT_ENCODING, disabledAutoHeaders);
+    this.applyAutoHeader(headers, "connection", AUTO_CONNECTION, disabledAutoHeaders);
+    this.applyAutoHeader(headers, "user-agent", AUTO_USER_AGENTS[source], disabledAutoHeaders);
+    this.applyAutoHeader(
+      headers,
+      "content-type",
+      preparedBody.inferredContentType,
+      disabledAutoHeaders,
+    );
+    this.applyAutoHeader(
+      headers,
+      "content-length",
+      preparedBody.bodyBuffer ? String(preparedBody.bodyBuffer.byteLength) : undefined,
+      disabledAutoHeaders,
+    );
+
+    return headers;
+  }
+
+  private applyAutoHeader(
+    headers: Record<string, string>,
+    key: AutoHeaderKey,
+    value: string | undefined,
+    disabledAutoHeaders: Set<AutoHeaderKey>,
+  ) {
+    if (!value || disabledAutoHeaders.has(key) || headers[key]) {
+      return;
+    }
+
+    headers[key] = value;
   }
 
   private async performRequest(input: {
@@ -279,6 +325,7 @@ export class ExecutionService {
             resolve({
               status: response.statusCode ?? 0,
               statusText: response.statusMessage ?? "",
+              requestHeaders: this.normalizeOutgoingHeaders(request.getHeaders()),
               headers: this.normalizeHeaders(response.headers),
               bodyBuffer: Buffer.concat(chunks),
               network: this.buildNetworkConsole(socketSnapshot, tlsSnapshot, request.reusedSocket),
@@ -307,6 +354,17 @@ export class ExecutionService {
       Object.entries(headers)
         .filter((entry): entry is [string, string | string[]] => entry[1] !== undefined)
         .map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : value]),
+    );
+  }
+
+  private normalizeOutgoingHeaders(headers: NodeJS.Dict<number | string | string[]>) {
+    return Object.fromEntries(
+      Object.entries(headers)
+        .filter((entry): entry is [string, number | string | string[]] => entry[1] !== undefined)
+        .map(([key, value]) => [
+          key,
+          Array.isArray(value) ? value.join(", ") : typeof value === "number" ? String(value) : value,
+        ]),
     );
   }
 

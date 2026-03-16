@@ -74,6 +74,15 @@ export class UpdateRequestDto {
 
   @IsOptional()
   @IsArray()
+  @IsIn(["host", "content-length", "content-type", "accept", "accept-encoding", "connection", "user-agent"], {
+    each: true,
+  })
+  disabledAutoHeaders?: Array<
+    "host" | "content-length" | "content-type" | "accept" | "accept-encoding" | "connection" | "user-agent"
+  >;
+
+  @IsOptional()
+  @IsArray()
   @ValidateNested({ each: true })
   @Type(() => KeyValueDto)
   queryParams?: KeyValueDto[];

@@ -80,6 +80,7 @@ export class ProjectsService {
         value: header.value,
         enabled: header.enabled,
       })),
+      disabledAutoHeaders: dto.disabledAutoHeaders ?? [],
       queryParams: dto.queryParams.map((param) => ({
         id: param.id ?? crypto.randomUUID(),
         key: param.key,

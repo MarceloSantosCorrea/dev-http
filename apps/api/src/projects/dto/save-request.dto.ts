@@ -76,6 +76,15 @@ export class SaveRequestDto {
   @Type(() => KeyValueDto)
   headers!: KeyValueDto[];
 
+  @IsOptional()
+  @IsArray()
+  @IsIn(["host", "content-length", "content-type", "accept", "accept-encoding", "connection", "user-agent"], {
+    each: true,
+  })
+  disabledAutoHeaders?: Array<
+    "host" | "content-length" | "content-type" | "accept" | "accept-encoding" | "connection" | "user-agent"
+  >;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => KeyValueDto)

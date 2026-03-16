@@ -135,6 +135,7 @@ model Request {
   bodyType           String      @db.VarChar(50)
   body               String      @db.LongText
   formData           Json
+  disabledAutoHeaders Json
   postResponseScript String      @db.LongText
   order              Int         @default(0)
   project            Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)

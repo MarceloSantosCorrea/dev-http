@@ -16,6 +16,7 @@ import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type {
+  AutoHeaderKey,
   AuthResponse,
   BodyType,
   ConsoleValue,
@@ -44,6 +45,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -238,8 +240,103 @@ type DesktopUpdateCheckResult = {
   skipped?: boolean;
 };
 
+type AutoHeaderPreview = {
+  key: AutoHeaderKey;
+  value: string;
+  state: "active" | "disabled" | "overridden";
+};
+
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const DESKTOP_SNAPSHOT_SCHEMA_VERSION = 1;
+const AUTO_HEADER_ORDER: AutoHeaderKey[] = [
+  "host",
+  "content-length",
+  "content-type",
+  "accept",
+  "accept-encoding",
+  "connection",
+  "user-agent",
+];
+const AUTO_HEADER_LABELS: Record<AutoHeaderKey, string> = {
+  host: "Host",
+  "content-length": "Content-Length",
+  "content-type": "Content-Type",
+  accept: "Accept",
+  "accept-encoding": "Accept-Encoding",
+  connection: "Connection",
+  "user-agent": "User-Agent",
+};
+
+function toggleAutoHeaderDisabled(
+  disabledAutoHeaders: AutoHeaderKey[] | undefined,
+  key: AutoHeaderKey,
+  enabled: boolean,
+) {
+  const next = new Set(disabledAutoHeaders ?? []);
+  if (enabled) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  return Array.from(next);
+}
+
+function resolveAutoHeaderPreview(
+  draft: BootstrapRequest,
+  variables: Variable[],
+): AutoHeaderPreview[] {
+  const disabledAutoHeaders = new Set(draft.disabledAutoHeaders ?? []);
+  const manualHeaders = new Set(
+    draft.headers
+      .filter((item) => item.enabled && item.key.trim())
+      .map((item) => item.key.trim().toLowerCase()),
+  );
+  const resolvedUrl = interpolateWithVariables(draft.url, variables).trim();
+  let hostValue = "<calculated when request is sent>";
+  try {
+    hostValue = resolvedUrl ? new URL(resolvedUrl).host || hostValue : hostValue;
+  } catch {
+    hostValue = "<calculated when request is sent>";
+  }
+
+  const previewValues: Record<AutoHeaderKey, string | undefined> = {
+    host: hostValue,
+    "content-length":
+      draft.method === "GET" || draft.method === "HEAD"
+        ? undefined
+        : "<calculated when request is sent>",
+    "content-type":
+      draft.method === "GET" || draft.method === "HEAD"
+        ? undefined
+        : draft.bodyType === "json"
+          ? "application/json"
+          : draft.bodyType === "form-urlencoded"
+            ? "application/x-www-form-urlencoded"
+            : draft.bodyType === "form-data"
+              ? "<calculated when request is sent>"
+              : undefined,
+    accept: "*/*",
+    "accept-encoding": "gzip, deflate, br",
+    connection: "keep-alive",
+    "user-agent": "<calculated when request is sent>",
+  };
+
+  return AUTO_HEADER_ORDER.flatMap((key) => {
+    const value = previewValues[key];
+    if (!value) {
+      return [];
+    }
+
+    let state: AutoHeaderPreview["state"] = "active";
+    if (disabledAutoHeaders.has(key)) {
+      state = "disabled";
+    } else if (manualHeaders.has(key)) {
+      state = "overridden";
+    }
+
+    return [{ key, value, state }];
+  });
+}
 
 function emptyKeyValue(): KeyValue {
   return {
@@ -263,6 +360,7 @@ function defaultRequest(projectId?: string, collectionId?: string): BootstrapReq
     bodyType: "json",
     body: "",
     formData: [],
+    disabledAutoHeaders: [],
     postResponseScript: "",
     updatedAt: new Date().toISOString(),
   };
@@ -314,6 +412,7 @@ function serializeRequestSnapshot(draft: BootstrapRequest) {
     bodyType: draft.bodyType,
     body: draft.body,
     formData: meaningfulFormData(draft.formData),
+    disabledAutoHeaders: draft.disabledAutoHeaders ?? [],
     postResponseScript: draft.postResponseScript,
   });
 }
@@ -574,12 +673,21 @@ function restoreWorkspaceUiState(
             .find((request) => request.id === draft.id) ?? null
         : null;
     const persistedSnapshot = persistedRequest ? serializeRequestSnapshot(persistedRequest) : null;
+    if (restored.isDirty && persistedSnapshot && currentSnapshot === persistedSnapshot) {
+      restored.savedSnapshot = persistedSnapshot;
+      restored.isDirty = false;
+      restored.hasRemoteConflict = false;
+      restored.remoteConflictAt = undefined;
+      restored.remoteConflictReason = undefined;
+      return [restored];
+    }
     if (
       options?.realtimeEvent?.entityType === "request" &&
       options.realtimeEvent.entityId === draft.id &&
       restored.isDirty &&
       persistedSnapshot &&
-      persistedSnapshot !== restored.savedSnapshot
+      persistedSnapshot !== restored.savedSnapshot &&
+      currentSnapshot !== persistedSnapshot
     ) {
       restored.hasRemoteConflict = true;
       restored.remoteConflictAt = options.realtimeEvent.occurredAt;
@@ -2462,9 +2570,10 @@ export function DevHttpClient() {
             : input.url;
       const resolvedUrl = new URL(requestUrl, window.location.origin);
       const apiUrl = new URL(API_BASE_URL, window.location.origin);
+      const apiBaseHref = apiUrl.href.replace(/\/$/, "");
       const shouldAttachHeader =
-        resolvedUrl.origin === apiUrl.origin &&
-        (resolvedUrl.pathname.startsWith("/api/") || resolvedUrl.pathname === "/api");
+        resolvedUrl.href === apiBaseHref ||
+        resolvedUrl.href.startsWith(apiBaseHref + "/");
       const headers = new Headers(init?.headers ?? (typeof input === "object" && "headers" in input ? input.headers : undefined));
       if (shouldAttachHeader) {
         headers.set(CLIENT_INSTANCE_HEADER_NAME, clientInstanceIdRef.current);
@@ -2934,7 +3043,9 @@ export function DevHttpClient() {
       bodyType: draftRequest.bodyType,
       body: draftRequest.body,
       formData: draftRequest.formData.filter((item) => item.key || item.value || item.src),
-      postResponseScript: draftRequest.postResponseScript,
+              disabledAutoHeaders: draftRequest.disabledAutoHeaders ?? [],
+              disabledAutoHeaders: draftRequest.disabledAutoHeaders ?? [],
+              postResponseScript: draftRequest.postResponseScript,
     };
   }
 
@@ -5341,6 +5452,22 @@ export function DevHttpClient() {
                           + Adicionar
                         </Button>
                       </div>
+                      <AutoGeneratedHeadersEditor
+                        items={resolveAutoHeaderPreview(
+                          draftRequest,
+                          selectedEnvironment?.variables ?? [],
+                        )}
+                        onToggle={(key, enabled) =>
+                          updateRequestTabDraft(activeTabId, (current) => ({
+                            ...current,
+                            disabledAutoHeaders: toggleAutoHeaderDisabled(
+                              current.disabledAutoHeaders,
+                              key,
+                              enabled,
+                            ),
+                          }))
+                        }
+                      />
                       <KeyValueEditor
                         rows={draftRequest.headers}
                         onChange={(rowId, key, value) => updateKeyValue("headers", rowId, key, value)}
@@ -6659,27 +6786,24 @@ function SettingsModal({
                   <div className="grid gap-4">
                     <div className="grid gap-2">
                       <Label htmlFor="current-password">Senha atual</Label>
-                      <Input
+                      <PasswordInput
                         id="current-password"
-                        type="password"
                         value={passwordForm.currentPassword}
                         onChange={(event) => onPasswordFieldChange("currentPassword", event.target.value)}
                       />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="new-password">Nova senha</Label>
-                      <Input
+                      <PasswordInput
                         id="new-password"
-                        type="password"
                         value={passwordForm.newPassword}
                         onChange={(event) => onPasswordFieldChange("newPassword", event.target.value)}
                       />
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="confirm-password">Confirmar nova senha</Label>
-                      <Input
+                      <PasswordInput
                         id="confirm-password"
-                        type="password"
                         value={passwordForm.confirmPassword}
                         onChange={(event) => onPasswordFieldChange("confirmPassword", event.target.value)}
                       />
@@ -6851,6 +6975,63 @@ function SettingsModal({
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+function AutoGeneratedHeadersEditor({
+  items,
+  onToggle,
+}: {
+  items: AutoHeaderPreview[];
+  onToggle: (key: AutoHeaderKey, enabled: boolean) => void;
+}) {
+  const [showAutoHeaders, setShowAutoHeaders] = useState(false);
+  const hiddenCount = items.length;
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-border/60 bg-muted/15">
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium">Headers automáticos</span>
+          {!showAutoHeaders ? (
+            <span className="text-xs text-muted-foreground">{hiddenCount} hidden</span>
+          ) : null}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          onClick={() => setShowAutoHeaders((current) => !current)}
+        >
+          {showAutoHeaders ? "Hide auto-generated headers" : "Show auto-generated headers"}
+        </Button>
+      </div>
+
+      {showAutoHeaders ? (
+        <div className="border-t border-border/60">
+          {items.map((item) => (
+            <div
+              key={item.key}
+              className="grid grid-cols-[auto_minmax(0,220px)_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm"
+            >
+              <Checkbox
+                checked={item.state !== "disabled"}
+                onCheckedChange={(checked) => onToggle(item.key, checked === true)}
+              />
+              <Input value={AUTO_HEADER_LABELS[item.key]} readOnly className="bg-background/70" />
+              <Input value={item.value} readOnly className="bg-background/70" />
+              <span className="text-xs text-muted-foreground">
+                {item.state === "overridden" ? "Sobrescrito" : "Auto"}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

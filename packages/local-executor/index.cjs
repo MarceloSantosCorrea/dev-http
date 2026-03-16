@@ -2,6 +2,15 @@ const { request: httpRequest } = require("node:http");
 const { request: httpsRequest } = require("node:https");
 const { Script } = require("node:vm");
 
+const AUTO_ACCEPT = "*/*";
+const AUTO_ACCEPT_ENCODING = "gzip, deflate, br";
+const AUTO_CONNECTION = "keep-alive";
+const AUTO_USER_AGENTS = {
+  server: "DevHttp/1.0 (Server)",
+  "desktop-local": "DevHttp/1.0 (Desktop)",
+  "agent-local": "DevHttp/1.0 (Agent)",
+};
+
 function executeRequestLocally(input) {
   const variables = new Map(
     (input.variables ?? [])
@@ -20,12 +29,8 @@ function executeRequestLocally(input) {
     url.searchParams.append(key, value);
   }
 
-  const headers = buildHeaders(input.headers ?? [], variables);
-  const preparedBody = prepareBody(input, variables, headers);
-
-  if (preparedBody.bodyBuffer && !headers["content-length"]) {
-    headers["content-length"] = String(preparedBody.bodyBuffer.byteLength);
-  }
+  const preparedBody = prepareBody(input, variables);
+  const headers = resolveHeaders(input, variables, url, preparedBody, input.source ?? "desktop-local");
 
   const startedAt = performance.now();
   return performRequest({
@@ -59,6 +64,7 @@ function executeRequestLocally(input) {
           Network: response.network,
           "Request Headers": {
             ...headers,
+            ...response.requestHeaders,
             ":path": `${url.pathname}${url.search}`,
             ":method": input.method,
             ":authority": url.host,
@@ -90,7 +96,7 @@ function executeRequestLocally(input) {
   });
 }
 
-function buildHeaders(inputHeaders, variables) {
+function buildManualHeaders(inputHeaders, variables) {
   const headers = {};
   for (const item of inputHeaders.filter((header) => header.enabled && header.key.trim())) {
     headers[item.key.toLowerCase()] = interpolate(item.value, variables);
@@ -98,13 +104,13 @@ function buildHeaders(inputHeaders, variables) {
   return headers;
 }
 
-function prepareBody(input, variables, headers) {
+function prepareBody(input, variables) {
   if (["GET", "HEAD"].includes(input.method)) {
     return { consoleBody: null };
   }
 
   if (input.bodyType === "form-data") {
-    return prepareMultipartBody(input.formData ?? [], variables, headers);
+    return prepareMultipartBody(input.formData ?? [], variables);
   }
 
   const body = interpolate(input.body ?? "", variables);
@@ -112,20 +118,19 @@ function prepareBody(input, variables, headers) {
     return { consoleBody: null };
   }
 
-  if (input.bodyType === "json" && !headers["content-type"]) {
-    headers["content-type"] = "application/json";
-  }
-  if (input.bodyType === "form-urlencoded" && !headers["content-type"]) {
-    headers["content-type"] = "application/x-www-form-urlencoded";
-  }
-
   return {
     bodyBuffer: Buffer.from(body, "utf8"),
     consoleBody: parseConsoleBody(body, input.bodyType === "json"),
+    inferredContentType:
+      input.bodyType === "json"
+        ? "application/json"
+        : input.bodyType === "form-urlencoded"
+          ? "application/x-www-form-urlencoded"
+          : undefined,
   };
 }
 
-function prepareMultipartBody(fields, variables, headers) {
+function prepareMultipartBody(fields, variables) {
   const enabledFields = fields.filter((entry) => entry.enabled && entry.key.trim());
   if (enabledFields.length === 0) {
     return { consoleBody: null };
@@ -178,15 +183,42 @@ function prepareMultipartBody(fields, variables, headers) {
   }
 
   chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-  headers["content-type"] = `multipart/form-data; boundary=${boundary}`;
-
   return {
     bodyBuffer: Buffer.concat(chunks),
     consoleBody: {
       type: "form-data",
       fields: consoleFields,
     },
+    inferredContentType: `multipart/form-data; boundary=${boundary}`,
   };
+}
+
+function resolveHeaders(input, variables, url, preparedBody, source) {
+  const headers = buildManualHeaders(input.headers ?? [], variables);
+  const disabledAutoHeaders = new Set(input.disabledAutoHeaders ?? []);
+
+  applyAutoHeader(headers, "host", url.host, disabledAutoHeaders);
+  applyAutoHeader(headers, "accept", AUTO_ACCEPT, disabledAutoHeaders);
+  applyAutoHeader(headers, "accept-encoding", AUTO_ACCEPT_ENCODING, disabledAutoHeaders);
+  applyAutoHeader(headers, "connection", AUTO_CONNECTION, disabledAutoHeaders);
+  applyAutoHeader(headers, "user-agent", AUTO_USER_AGENTS[source] ?? AUTO_USER_AGENTS["desktop-local"], disabledAutoHeaders);
+  applyAutoHeader(headers, "content-type", preparedBody.inferredContentType, disabledAutoHeaders);
+  applyAutoHeader(
+    headers,
+    "content-length",
+    preparedBody.bodyBuffer ? String(preparedBody.bodyBuffer.byteLength) : undefined,
+    disabledAutoHeaders,
+  );
+
+  return headers;
+}
+
+function applyAutoHeader(headers, key, value, disabledAutoHeaders) {
+  if (!value || disabledAutoHeaders.has(key) || headers[key]) {
+    return;
+  }
+
+  headers[key] = value;
 }
 
 function performRequest(input) {
@@ -212,6 +244,7 @@ function performRequest(input) {
           resolve({
             status: response.statusCode ?? 0,
             statusText: response.statusMessage ?? "",
+            requestHeaders: normalizeOutgoingHeaders(request.getHeaders()),
             headers: normalizeHeaders(response.headers),
             bodyBuffer: Buffer.concat(chunks),
             network: buildNetworkConsole(socketSnapshot, tlsSnapshot, request.reusedSocket),
@@ -238,6 +271,17 @@ function normalizeHeaders(headers) {
     Object.entries(headers)
       .filter((entry) => entry[1] !== undefined)
       .map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : String(value)]),
+  );
+}
+
+function normalizeOutgoingHeaders(headers) {
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter((entry) => entry[1] !== undefined)
+      .map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value.join(", ") : typeof value === "number" ? String(value) : String(value),
+      ]),
   );
 }
 

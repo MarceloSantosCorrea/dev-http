@@ -8,7 +8,9 @@ import type { AuthResponse, RegisterPayload, User, WorkspaceMembership } from "@
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
+import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API_BASE_URL =
@@ -41,7 +43,12 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Falha na chamada ${path}`);
+    let message = text || `Falha na chamada ${path}`;
+    try {
+      const json = JSON.parse(text);
+      if (typeof json?.message === "string") message = json.message;
+    } catch {}
+    throw new Error(message);
   }
 
   return (await response.json()) as T;
@@ -192,9 +199,8 @@ export function AuthScreen({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="password">Senha</Label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               value={form.password}
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
             />
@@ -229,7 +235,12 @@ export function AuthScreen({
             </Link>
           </p>
 
-          {feedback ? <p className="text-sm text-destructive">{feedback}</p> : null}
+          {feedback ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{feedback}</span>
+            </div>
+          ) : null}
           </form>
         </CardContent>
       </Card>

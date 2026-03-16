@@ -8,6 +8,7 @@ import {
 import { compare, hash } from "bcryptjs";
 import { Prisma, type User as PrismaUser } from "@prisma/client";
 import type {
+  AutoHeaderKey,
   AuthResponse,
   Environment,
   FormDataField,
@@ -1417,10 +1418,13 @@ export class StoreService {
         where: { id: payload.id },
         data: {
           name: payload.name,
-          collectionId: payload.collectionId,
+          collection: payload.collectionId
+            ? { connect: { id: payload.collectionId } }
+            : { disconnect: true },
           method: payload.method,
           url: payload.url,
           headers: this.keyValuesToJson(payload.headers),
+          disabledAutoHeaders: this.disabledAutoHeadersToJson(payload.disabledAutoHeaders ?? []),
           queryParams: this.keyValuesToJson(payload.queryParams),
           bodyType: payload.bodyType,
           body: payload.body,
@@ -1449,6 +1453,7 @@ export class StoreService {
         method: payload.method,
         url: payload.url,
         headers: this.keyValuesToJson(payload.headers),
+        disabledAutoHeaders: this.disabledAutoHeadersToJson(payload.disabledAutoHeaders ?? []),
         queryParams: this.keyValuesToJson(payload.queryParams),
         bodyType: payload.bodyType,
         body: payload.body,
@@ -2357,10 +2362,13 @@ export class StoreService {
         where: { id: payload.id },
         data: {
           name: payload.name,
-          collectionId: payload.collectionId,
+          collection: payload.collectionId
+            ? { connect: { id: payload.collectionId } }
+            : { disconnect: true },
           method: payload.method,
           url: payload.url,
           headers: this.keyValuesToJson(payload.headers),
+          disabledAutoHeaders: this.disabledAutoHeadersToJson(payload.disabledAutoHeaders ?? []),
           queryParams: this.keyValuesToJson(payload.queryParams),
           bodyType: payload.bodyType,
           body: payload.body,
@@ -2381,6 +2389,7 @@ export class StoreService {
         method: payload.method,
         url: payload.url,
         headers: this.keyValuesToJson(payload.headers),
+        disabledAutoHeaders: this.disabledAutoHeadersToJson(payload.disabledAutoHeaders ?? []),
         queryParams: this.keyValuesToJson(payload.queryParams),
         bodyType: payload.bodyType,
         body: payload.body,
@@ -2472,6 +2481,7 @@ export class StoreService {
     method: string;
     url: string;
     headers: Prisma.JsonValue;
+    disabledAutoHeaders: Prisma.JsonValue;
     queryParams: Prisma.JsonValue;
     bodyType: string;
     body: string;
@@ -2487,6 +2497,7 @@ export class StoreService {
       method: request.method as RequestDefinition["method"],
       url: request.url,
       headers: this.parseKeyValues(request.headers),
+      disabledAutoHeaders: this.parseDisabledAutoHeaders(request.disabledAutoHeaders),
       queryParams: this.parseKeyValues(request.queryParams),
       bodyType: request.bodyType as RequestDefinition["bodyType"],
       body: request.body,
@@ -2582,6 +2593,27 @@ export class StoreService {
     });
   }
 
+  private parseDisabledAutoHeaders(value: Prisma.JsonValue): AutoHeaderKey[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const allowed = new Set<AutoHeaderKey>([
+      "host",
+      "content-length",
+      "content-type",
+      "accept",
+      "accept-encoding",
+      "connection",
+      "user-agent",
+    ]);
+
+    return value.flatMap((entry) => {
+      const normalized = String(entry ?? "").toLowerCase() as AutoHeaderKey;
+      return allowed.has(normalized) ? [normalized] : [];
+    });
+  }
+
   private variablesToJson(variables: Variable[]): Prisma.InputJsonValue {
     return variables.map((variable) => ({
       key: variable.key,
@@ -2609,6 +2641,10 @@ export class StoreService {
       type: item.type,
       src: item.src ?? "",
     }));
+  }
+
+  private disabledAutoHeadersToJson(items: AutoHeaderKey[]): Prisma.InputJsonValue {
+    return items;
   }
 
   private asRecord(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> {
