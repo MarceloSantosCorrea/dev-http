@@ -770,15 +770,20 @@ function restoreWorkspaceUiState(
     requestPaneRatio: snapshot.requestPaneRatio,
     responseView: snapshot.responseView,
     bootstrap: bootstrapWithEnvironmentDrafts,
-    savedEnvironmentSnapshot:
-      snapshot.savedEnvironmentSnapshot ||
-      JSON.stringify(
-        selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
-          null,
-      ),
+    savedEnvironmentSnapshot: snapshot.environmentDrafts.some((env) => env.id === selectedEnvironmentId)
+      ? snapshot.savedEnvironmentSnapshot ||
+        JSON.stringify(
+          selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
+            null,
+        )
+      : JSON.stringify(
+          selectedProject.environments.find((environment) => environment.id === selectedEnvironmentId) ??
+            null,
+        ),
     hasEnvironmentRemoteConflict:
       options?.realtimeEvent?.entityType === "environment" &&
       options.realtimeEvent.entityId === selectedEnvironmentId &&
+      snapshot.environmentDrafts.some((env) => env.id === selectedEnvironmentId) &&
       JSON.stringify(
         snapshot.environmentDrafts.find((environment) => environment.id === selectedEnvironmentId) ?? null,
       ) !== snapshot.savedEnvironmentSnapshot &&
