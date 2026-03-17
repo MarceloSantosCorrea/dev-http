@@ -5958,6 +5958,7 @@ export function DevHttpClient() {
         <div
           style={{ position: "fixed", left: collectionMenu.x, top: collectionMenu.y, zIndex: 9999 }}
           className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-xl"
+          onMouseDown={(e) => e.stopPropagation()}
         >
           <button
             type="button"
