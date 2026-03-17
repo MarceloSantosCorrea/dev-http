@@ -834,12 +834,21 @@ function buildRealtimeWorkspaceSnapshot(
     "schemaVersion" | "userId" | "workspaceId" | "openTabs" | "environmentDrafts"
   >,
 ): RealtimeWorkspaceSnapshot {
+  const selectedEnv =
+    bootstrap.projects
+      .flatMap((project) => project.environments)
+      .find((environment) => environment.id === input.selectedEnvironmentId) ?? null;
+  const isSelectedEnvDirty =
+    selectedEnv !== null &&
+    !!input.savedEnvironmentSnapshot &&
+    JSON.stringify(selectedEnv) !== input.savedEnvironmentSnapshot;
+
   return {
     schemaVersion: DESKTOP_SNAPSHOT_SCHEMA_VERSION,
     userId,
     workspaceId,
     ...input,
-    environmentDrafts: bootstrap.projects.flatMap((project) => project.environments),
+    environmentDrafts: isSelectedEnvDirty && selectedEnv ? [selectedEnv] : [],
     openTabs: openTabs.map((tab) =>
       tab.type === "request"
         ? {
