@@ -58,6 +58,11 @@ import {
 import { createRealtimeSocket } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import CodeMirror from "@uiw/react-codemirror";
+import { json, jsonParseLinter } from "@codemirror/lang-json";
+import { linter } from "@codemirror/lint";
+import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { RangeSetBuilder } from "@codemirror/state";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
@@ -368,6 +373,103 @@ function buildUrlWithQueryParams(url: string, params: KeyValue[]): string {
   if (enabled.length === 0) return base;
   const qs = enabled.map((p) => (p.value ? `${p.key}=${p.value}` : p.key)).join("&");
   return `${base}?${qs}`;
+}
+
+const varHighlightMark = Decoration.mark({ class: "cm-var-highlight" });
+
+const varHighlightPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: import("@codemirror/view").EditorView) {
+      this.decorations = this.buildDecorations(view);
+    }
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = this.buildDecorations(update.view);
+      }
+    }
+    buildDecorations(view: import("@codemirror/view").EditorView): DecorationSet {
+      const builder = new RangeSetBuilder<Decoration>();
+      const text = view.state.doc.toString();
+      const regex = /\{\{[^}]+\}\}/g;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(text)) !== null) {
+        builder.add(match.index, match.index + match[0].length, varHighlightMark);
+      }
+      return builder.finish();
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+function JsonBodyEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+  const [isDark, setIsDark] = useState(false);
+  useEffect(() => {
+    const update = () => setIsDark(document.documentElement.classList.contains("dark"));
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="json-body-editor rounded border border-[var(--bd-str)] overflow-hidden text-sm">
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        extensions={[json(), linter(jsonParseLinter()), varHighlightPlugin]}
+        theme={isDark ? "dark" : "light"}
+        basicSetup={{
+          lineNumbers: true,
+          foldGutter: false,
+          dropCursor: false,
+          allowMultipleSelections: false,
+          indentOnInput: true,
+          bracketMatching: true,
+          closeBrackets: true,
+          autocompletion: false,
+          highlightActiveLine: false,
+          highlightSelectionMatches: false,
+          searchKeymap: false,
+        }}
+        style={{ fontSize: "13px" }}
+      />
+    </div>
+  );
+}
+
+function TextBodyEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+  const [isDark, setIsDark] = useState(false);
+  useEffect(() => {
+    const update = () => setIsDark(document.documentElement.classList.contains("dark"));
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="json-body-editor rounded border border-[var(--bd-str)] overflow-hidden text-sm">
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        extensions={[varHighlightPlugin]}
+        theme={isDark ? "dark" : "light"}
+        basicSetup={{
+          lineNumbers: true,
+          foldGutter: false,
+          dropCursor: false,
+          allowMultipleSelections: false,
+          indentOnInput: false,
+          bracketMatching: false,
+          closeBrackets: false,
+          autocompletion: false,
+          highlightActiveLine: false,
+          highlightSelectionMatches: false,
+          searchKeymap: false,
+        }}
+        style={{ fontSize: "13px" }}
+      />
+    </div>
+  );
 }
 
 function defaultRequest(projectId?: string, collectionId?: string): BootstrapRequest {
@@ -5600,7 +5702,7 @@ export function DevHttpClient() {
                             <option value="form-urlencoded">Form URL Encoded</option>
                             <option value="form-data">Form Data</option>
                           </select>
-                          {draftRequest.bodyType !== "form-data" ? (
+                          {draftRequest.bodyType === "json" ? (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -5618,12 +5720,17 @@ export function DevHttpClient() {
                           onAddText={() => addFormDataField("text")}
                           onAddFile={() => addFormDataField("file")}
                         />
-                      ) : (
-                        <Textarea
+                      ) : draftRequest.bodyType === "json" ? (
+                        <JsonBodyEditor
+                          key="json-body-editor"
                           value={draftRequest.body}
-                          onChange={(event) => updateDraft("body", event.target.value)}
-                          placeholder={`{\n  "hello": "world"\n}`}
-                          className="font-mono min-h-[160px]"
+                          onChange={(val) => updateDraft("body", val)}
+                        />
+                      ) : (
+                        <TextBodyEditor
+                          key="text-body-editor"
+                          value={draftRequest.body}
+                          onChange={(val) => updateDraft("body", val)}
                         />
                       )}
                     </TabsContent>
