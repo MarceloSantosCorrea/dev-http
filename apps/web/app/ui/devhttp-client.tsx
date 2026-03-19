@@ -976,7 +976,7 @@ function VarSuggestionsDropdown({
   if (items.length === 0) return null;
   return (
     <div
-      className="fixed z-[300] min-w-48 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg py-1"
+      className="fixed z-[300] min-w-48 max-h-52 overflow-y-auto rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] shadow-lg py-1"
       style={{ top, left }}
     >
       {items.map((v, i) => (
@@ -987,8 +987,8 @@ function VarSuggestionsDropdown({
           className={cn(
             "w-full text-left px-3 py-1.5 text-sm flex items-center gap-2",
             i === activeIndex
-              ? "bg-primary/15 text-primary"
-              : "text-foreground hover:bg-muted/50",
+              ? "bg-[var(--brand)]/15 text-[var(--brand)]"
+              : "text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]",
           )}
         >
           <span className="font-medium truncate">{v.key}</span>
@@ -1023,13 +1023,13 @@ function VarPopover({
     <div
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="fixed z-[200] min-w-52 rounded-lg border border-border bg-popover shadow-lg p-3 flex flex-col gap-2"
+      className="fixed z-[200] min-w-52 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] shadow-lg p-3 flex flex-col gap-2"
       style={{ top, left }}
     >
       <div className="flex items-center justify-between gap-4">
         <span className="text-xs font-medium text-foreground truncate">{name}</span>
         {environmentName && (
-          <span className="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium shrink-0">
+          <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--brand)]/15 text-[var(--brand)] font-medium shrink-0">
             {environmentName}
           </span>
         )}
@@ -1041,8 +1041,8 @@ function VarPopover({
         placeholder={resolved ? "(vazio)" : "variável não encontrada"}
         onChange={(e) => resolved && onUpdateVariable?.(name, e.target.value)}
         className={cn(
-          "h-7 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none",
-          "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
+          "h-7 w-full rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] px-2 text-sm text-[var(--text-pri)] outline-none",
+          "focus-visible:border-[var(--focus-ring)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-alpha)]",
           "disabled:opacity-50 disabled:cursor-not-allowed",
         )}
       />
@@ -1217,9 +1217,9 @@ function VariableHighlightInput({
         onMouseLeave={() => scheduleClose()}
         onBlur={() => setSuggestions(null)}
         className={cn(
-          "var-input h-8 w-full rounded-lg border border-input bg-transparent dark:bg-input/30 px-2.5",
-          "text-base md:text-sm outline-none",
-          "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+          "var-input h-[34px] w-full rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] px-2.5 text-[var(--text-pri)]",
+          "text-sm outline-none",
+          "focus-visible:border-[var(--focus-ring)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-alpha)]",
           "whitespace-nowrap overflow-x-auto",
           "flex items-center",
           disabled && "opacity-50 pointer-events-none cursor-not-allowed",
@@ -1445,15 +1445,15 @@ function isPostmanEnvironmentFile(value: unknown): value is PostmanEnvironmentFi
 }
 
 const selectClass =
-  "h-8 rounded-lg border border-input bg-muted/50 pl-2.5 pr-8 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring select-custom";
+  "h-[34px] rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] pl-2.5 pr-8 text-sm text-[var(--text-pri)] transition-colors focus:outline-none focus:ring-2 focus:border-[var(--focus-ring)] focus:ring-[var(--focus-ring-alpha)] select-custom";
 
 const METHOD_COLORS: Record<string, string> = {
-  GET: "#247E4C",
-  POST: "#A87D13",
-  PUT: "#2552AA",
+  GET: "#26B47F",
+  POST: "#FF8C00",
+  PUT: "#3A82E6",
   PATCH: "#6546AB",
-  DELETE: "#9F2F22",
-  HEAD: "#247E4C",
+  DELETE: "#E14C3B",
+  HEAD: "#A6A6A6",
   OPTIONS: "#B93B85",
 };
 
@@ -1560,7 +1560,7 @@ function WorkspaceSelect({
         ref={triggerRef}
         type="button"
         className={cn(
-          "h-8 flex items-center gap-1.5 rounded-lg border border-input bg-muted/50 pl-2.5 pr-2 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring hover:bg-muted/70 flex-1",
+          "h-[34px] flex items-center gap-1.5 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] pl-2.5 pr-2 text-sm text-[var(--text-pri)] transition-colors focus:outline-none focus:ring-2 focus:border-[var(--focus-ring)] hover:bg-[var(--bg-secondary)] flex-1",
           className,
         )}
         onClick={() => {
@@ -1576,13 +1576,13 @@ function WorkspaceSelect({
         <div
           ref={panelRef}
           style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
-          className="rounded-lg border border-border bg-popover p-1 shadow-xl"
+          className="rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
         >
           {workspaces.map(({ workspace }) => (
             <button
               key={workspace.id}
               type="button"
-              className="w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted/60 transition-colors"
+              className="w-full rounded px-3 py-1.5 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)] transition-colors"
               onClick={() => { onChange(workspace.id); setAnchor(null); }}
             >
               {workspace.name}
@@ -1631,7 +1631,7 @@ function EnvironmentSelect({
         type="button"
         disabled={disabled}
         className={cn(
-          "h-8 w-full flex items-center gap-1.5 rounded-lg border border-input bg-muted/50 pl-2.5 pr-2 text-sm text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring hover:bg-muted/70",
+          "h-[34px] w-full flex items-center gap-1.5 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] pl-2.5 pr-2 text-sm text-[var(--text-pri)] transition-colors focus:outline-none focus:ring-2 focus:border-[var(--focus-ring)] hover:bg-[var(--bg-secondary)]",
           disabled && "opacity-50 cursor-not-allowed pointer-events-none",
         )}
         onClick={() => {
@@ -1647,11 +1647,11 @@ function EnvironmentSelect({
         <div
           ref={panelRef}
           style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
-          className="rounded-lg border border-border bg-popover p-1 shadow-xl"
+          className="rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
         >
           <button
             type="button"
-            className="w-full rounded-md px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+            className="w-full rounded px-3 py-1.5 text-left text-sm text-[var(--text-sec)] hover:bg-[var(--bg-secondary)] transition-colors"
             onClick={() => { onChange(""); setAnchor(null); }}
           >
             Sem ambiente
@@ -1660,7 +1660,7 @@ function EnvironmentSelect({
             <button
               key={env.id}
               type="button"
-              className="w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted/60 transition-colors"
+              className="w-full rounded px-3 py-1.5 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)] transition-colors"
               onClick={() => { onChange(env.id); setAnchor(null); }}
             >
               {env.name}
@@ -1754,8 +1754,8 @@ function SortableRequestItem({
       className={cn(
         "group/request flex items-center gap-1 w-full min-w-0 pl-2 pr-1 py-px text-xs rounded transition-colors",
         isActive
-          ? "text-foreground bg-primary/8"
-          : "text-muted-foreground hover:text-foreground hover:bg-white/5",
+          ? "text-[var(--text-pri)] bg-[var(--bg-tertiary)] border-l-2 border-[var(--brand)]"
+          : "text-[var(--text-sec)] hover:text-[var(--text-pri)] hover:bg-[var(--bg-tertiary)]",
       )}
     >
       <button
@@ -1862,8 +1862,8 @@ function SortableCollectionItem({
           type="button"
           onClick={() => onSelectCollection(collection.id)}
           className={cn(
-            "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-white/5 transition-colors min-w-0 text-left",
-            isSelected ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+            "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-[var(--bg-tertiary)] transition-colors min-w-0 text-left",
+            isSelected ? "text-[var(--text-pri)] font-medium" : "text-[var(--text-sec)] hover:text-[var(--text-pri)]",
           )}
         >
           <span className="text-[0.65rem] shrink-0 opacity-70">{isExpanded ? "▾" : "▸"}</span>
@@ -1963,8 +1963,8 @@ function SortableEnvironmentItem({
         className={cn(
           "flex items-center gap-1.5 w-full min-w-0 px-1 py-0.5 text-xs rounded transition-colors text-left",
           isActive
-            ? "text-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-white/5",
+            ? "text-[var(--text-pri)] font-medium"
+            : "text-[var(--text-sec)] hover:text-[var(--text-pri)] hover:bg-[var(--bg-tertiary)]",
         )}
       >
         <span className="text-[0.6rem] shrink-0 opacity-50">○</span>
@@ -2012,8 +2012,8 @@ function SortableTab({
       className={cn(
         "group flex items-center gap-1.5 px-3 py-1.5 border-b-2 whitespace-nowrap text-xs shrink-0 transition-colors select-none",
         isActive
-          ? "border-primary text-foreground bg-primary/5"
-          : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/3",
+          ? "border-[var(--brand)] text-[var(--text-pri)] bg-[var(--bg-primary)]"
+          : "border-transparent text-[var(--text-sec)] hover:text-[var(--text-pri)] hover:bg-[var(--bg-tertiary)]",
       )}
     >
       <button
@@ -4877,7 +4877,7 @@ export function DevHttpClient() {
         {hasDesktopBridge && (
           <div
             className={cn(
-              "shrink-0 h-9 flex items-center bg-sidebar border-b border-border/30 select-none",
+              "shrink-0 h-[37px] flex items-center bg-[var(--hdr-bg)] border-b border-[var(--bd-def)] select-none",
               desktopPlatform !== "darwin" && "desktop-titlebar-drag",
             )}
             onDoubleClick={handleDesktopTitleBarDoubleClick}
@@ -4897,7 +4897,7 @@ export function DevHttpClient() {
                     : undefined
               }
             >
-              <span className="text-sm font-semibold">DevHttp</span>
+              <span className="text-sm font-semibold text-[var(--hdr-txt)]">DevHttp</span>
             </div>
             {!usesNativeWindowControls && desktopPlatform !== "darwin" && (
               <div
@@ -4907,7 +4907,7 @@ export function DevHttpClient() {
                 <button
                   onClick={() => window.devHttpDesktop?.minimizeWindow()}
                   data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors desktop-titlebar-no-drag"
+                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
                   title="Minimizar"
                   type="button"
                 >
@@ -4916,7 +4916,7 @@ export function DevHttpClient() {
                 <button
                   onClick={() => window.devHttpDesktop?.maximizeWindow()}
                   data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors desktop-titlebar-no-drag"
+                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
                   title={isWindowMaximized ? "Restaurar" : "Maximizar"}
                   type="button"
                 >
@@ -4925,7 +4925,7 @@ export function DevHttpClient() {
                 <button
                   onClick={() => window.devHttpDesktop?.closeWindow()}
                   data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-muted-foreground hover:bg-red-500/80 hover:text-white transition-colors desktop-titlebar-no-drag"
+                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-red-600 hover:text-white transition-colors desktop-titlebar-no-drag"
                   title="Fechar"
                   type="button"
                 >
@@ -4944,7 +4944,7 @@ export function DevHttpClient() {
       >
         <aside
           className={cn(
-            "relative border-r border-border bg-sidebar backdrop-blur-md flex flex-col gap-3 overflow-hidden min-w-0 transition-all duration-200 max-[1180px]:border-r-0 max-[1180px]:border-b",
+            "relative border-r border-[var(--bd-def)] bg-[var(--bg-secondary)] flex flex-col gap-3 overflow-hidden min-w-0 transition-all duration-200 max-[1180px]:border-r-0 max-[1180px]:border-b",
             sidebarCollapsed ? "p-0 w-0 opacity-0" : "p-3",
           )}
         >
@@ -4958,7 +4958,7 @@ export function DevHttpClient() {
               </div>
               <button
                 onClick={handleToggleSidebar}
-                className="flex items-center justify-center w-6 h-6 rounded-md border border-border/50 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center justify-center w-6 h-6 rounded border border-[var(--bd-def)] hover:bg-[var(--bg-tertiary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors"
                 title="Recolher sidebar"
                 type="button"
               >
@@ -5032,17 +5032,17 @@ export function DevHttpClient() {
                   ...
                 </Button>
                 {isMenuOpen ? (
-                  <div className="absolute right-0 top-10 z-20 min-w-44 rounded-lg border border-border bg-popover p-1 shadow-xl">
+                  <div className="absolute right-0 top-10 z-20 min-w-44 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
                     <button
                       type="button"
-                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                      className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
                       onClick={() => fileInputRef.current?.click()}
                     >
                       Importar
                     </button>
                     <button
                       type="button"
-                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                      className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
                       onClick={() => void handleExport()}
                     >
                       Exportar
@@ -5075,8 +5075,8 @@ export function DevHttpClient() {
                 <section
                   key={project.id}
                   className={cn(
-                    "rounded-lg border transition-colors overflow-hidden",
-                    isActiveProject ? "border-primary/40 bg-primary/5" : "border-border/70",
+                    "rounded border transition-colors overflow-hidden",
+                    isActiveProject ? "border-[var(--brand)]/40 bg-[var(--bg-tertiary)]" : "border-[var(--bd-def)]",
                   )}
                 >
                   <div className="flex items-start gap-2 px-3 py-2">
@@ -5134,7 +5134,7 @@ export function DevHttpClient() {
                   </div>
 
                   {isActiveProject && !isProjectMinimized ? (
-                    <div className="border-t border-border/60 px-3 py-2 grid gap-3">
+                    <div className="border-t border-[var(--bd-def)] px-3 py-2 grid gap-3">
                       <div className="grid gap-0.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
@@ -5259,11 +5259,11 @@ export function DevHttpClient() {
             </div>
           </div>
 
-          <div className="mt-auto border-t border-border/60 pt-2">
+          <div className="mt-auto border-t border-[var(--bd-def)] pt-2">
             <div ref={userMenuRef} className="relative">
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card/70 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+                className="flex w-full items-center gap-2 rounded border border-[var(--bd-def)] bg-[var(--bg-tertiary)] px-3 py-2 text-left hover:bg-[var(--bg-secondary)] transition-colors"
                 onClick={() => setIsUserMenuOpen((current) => !current)}
               >
                 <UserAvatar user={bootstrap.user} />
@@ -5275,17 +5275,17 @@ export function DevHttpClient() {
               </button>
 
               {isUserMenuOpen ? (
-                <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-xl border border-border bg-popover p-1 shadow-xl">
+                <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
                   <button
                     type="button"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                    className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
                     onClick={() => openSettings("profile")}
                   >
                     Configurações
                   </button>
                   <button
                     type="button"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
+                    className="w-full rounded px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
                     onClick={() => void handleLogout()}
                   >
                     Sair
@@ -5297,7 +5297,7 @@ export function DevHttpClient() {
 
           {!sidebarCollapsed && (
             <div
-              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 transition-colors z-10"
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-[var(--brand)]/40 active:bg-[var(--brand)]/60 transition-colors z-10"
               onMouseDown={handleResizeStart}
             />
           )}
@@ -5308,7 +5308,7 @@ export function DevHttpClient() {
             <div className="shrink-0">
               <button
                 onClick={handleToggleSidebar}
-                className="flex items-center justify-center w-6 h-6 rounded-md border border-border/50 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                className="flex items-center justify-center w-6 h-6 rounded border border-[var(--bd-def)] hover:bg-[var(--bg-tertiary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors shrink-0"
                 title="Expandir sidebar"
                 type="button"
               >
@@ -5323,7 +5323,7 @@ export function DevHttpClient() {
                 items={openTabs.map((t) => t.tabId)}
                 strategy={horizontalListSortingStrategy}
               >
-                <div className="flex items-stretch overflow-x-auto -mx-3 border-b border-border/60 shrink-0">
+                <div className="flex items-stretch overflow-x-auto -mx-3 border-b border-[var(--bd-def)] bg-[var(--bg-secondary)] shrink-0">
                   {openTabs.map((tab) => {
                     const isActive = tab.tabId === activeTabId;
                     const envName =
@@ -5372,17 +5372,17 @@ export function DevHttpClient() {
                       + Novo
                     </Button>
                     {isEditorNewMenuOpen ? (
-                      <div className="absolute left-1/2 -translate-x-1/2 top-10 z-20 min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl">
+                      <div className="absolute left-1/2 -translate-x-1/2 top-10 z-20 min-w-36 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
                         <button
                           type="button"
-                          className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                          className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
                           onClick={() => openCreateModal("workspace")}
                         >
                           Workspace
                         </button>
                         <button
                           type="button"
-                          className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                          className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
                           onClick={() => openCreateModal("project")}
                         >
                           Projeto
@@ -5596,10 +5596,10 @@ export function DevHttpClient() {
                 className="hidden lg:flex items-center justify-center cursor-row-resize select-none"
                 onMouseDown={handleRequestResponseResizeStart}
               >
-                <div className="h-2 w-full rounded-full bg-border/70 hover:bg-primary/50 transition-colors" />
+                <div className="h-2 w-full rounded-full bg-[var(--bd-def)] hover:bg-[var(--brand)]/50 transition-colors" />
               </div>
 
-              <div className="flex flex-col gap-2 lg:min-h-0 lg:overflow-hidden lg:h-full border-t border-border/40 lg:border-t-0 lg:border-l pt-2">
+              <div className="flex flex-col gap-2 lg:min-h-0 lg:overflow-hidden lg:h-full border-t border-[var(--bd-def)] lg:border-t-0 lg:border-l pt-2">
                   <Tabs
                     value={responseView}
                     onValueChange={(value) => setResponseView(value as "response" | "console")}
@@ -5618,11 +5618,11 @@ export function DevHttpClient() {
                               "font-mono text-xs",
                               execution.status >= 200 &&
                                 execution.status < 300 &&
-                                "border-green-500/40 text-green-400",
+                                "border-[#26B47F]/40 text-[#26B47F]",
                               execution.status >= 400 &&
                                 execution.status < 500 &&
-                                "border-yellow-500/40 text-yellow-400",
-                              execution.status >= 500 && "border-red-500/40 text-red-400",
+                                "border-[#FF8C00]/40 text-[#FF8C00]",
+                              execution.status >= 500 && "border-[#E14C3B]/40 text-[#E14C3B]",
                             )}
                           >
                             {execution.status} · {execution.durationMs}ms
@@ -5900,7 +5900,7 @@ export function DevHttpClient() {
         <div
           ref={notificationsPanelRef}
           style={{ position: "fixed", left: notificationsAnchor.x, top: notificationsAnchor.y, zIndex: 9999 }}
-          className="w-80 rounded-xl border border-border bg-popover p-2 shadow-xl"
+          className="w-80 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-2 shadow-xl"
         >
           <div className="mb-2 flex items-center justify-between px-2">
             <p className="text-sm font-semibold">Notificações</p>
@@ -5915,7 +5915,7 @@ export function DevHttpClient() {
               notifications.map((notification) => (
                 <div
                   key={notification.id}
-                  className="rounded-lg border border-border/60 bg-card/70 p-3"
+                  className="rounded border border-[var(--bd-def)] bg-[var(--bg-secondary)] p-3"
                 >
                   <p className="text-sm font-medium">{notification.title}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{notification.body}</p>
@@ -5948,18 +5948,18 @@ export function DevHttpClient() {
         <div
           ref={newMenuPanelRef}
           style={{ position: "fixed", left: newMenuAnchor.x, top: newMenuAnchor.y, zIndex: 9999 }}
-          className="min-w-36 rounded-lg border border-border bg-popover p-1 shadow-xl"
+          className="min-w-36 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
         >
           <button
             type="button"
-            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
             onClick={() => { setNewMenuAnchor(null); openCreateModal("workspace"); }}
           >
             Workspace
           </button>
           <button
             type="button"
-            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
             onClick={() => { setNewMenuAnchor(null); openCreateModal("project"); }}
           >
             Projeto
@@ -5971,19 +5971,19 @@ export function DevHttpClient() {
       {collectionMenu && createPortal(
         <div
           style={{ position: "fixed", left: collectionMenu.x, top: collectionMenu.y, zIndex: 9999 }}
-          className="min-w-44 rounded-lg border border-border bg-popover p-1 shadow-xl"
+          className="min-w-44 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
           onMouseDown={(e) => e.stopPropagation()}
         >
           <button
             type="button"
-            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
             onClick={() => { setCollectionMenu(null); handleCreateNewRequest(collectionMenu.id); }}
           >
             Nova request
           </button>
           <button
             type="button"
-            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
             onClick={() => { setCollectionMenu(null); openCreateModal("collection"); }}
           >
             Nova coleção
@@ -5991,7 +5991,7 @@ export function DevHttpClient() {
           {canRenameProjectEntities ? (
             <button
               type="button"
-              className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+              className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
               onClick={() => {
                 const col = bootstrap?.projects
                   .find((p) => p.id === collectionMenu.projectId)
@@ -6580,8 +6580,8 @@ function SettingsModal({
                   type="button"
                   onClick={() => onTabChange(item.id as SettingsTab)}
                   className={cn(
-                    "rounded-xl px-3 py-2 text-left text-sm transition-colors",
-                    tab === item.id ? "bg-primary text-primary-foreground" : "hover:bg-muted",
+                    "rounded px-3 py-2 text-left text-sm transition-colors",
+                    tab === item.id ? "bg-[var(--brand)] text-white" : "text-[var(--text-sec)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-pri)]",
                   )}
                 >
                   {item.label}

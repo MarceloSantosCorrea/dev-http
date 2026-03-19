@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Space_Grotesk, Geist } from "next/font/google";
+import { IBM_Plex_Mono, Inter } from "next/font/google";
 import type { ReactNode } from "react";
 
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
-
-const heading = Space_Grotesk({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-heading",
+  variable: "--font-sans",
+  weight: ["300", "400", "500", "600"],
 });
 
 const mono = IBM_Plex_Mono({
@@ -30,7 +29,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="pt-BR" suppressHydrationWarning className={cn("font-sans", geist.variable)}>
+    <html lang="pt-BR" suppressHydrationWarning className={cn("font-sans", inter.variable)}>
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -38,7 +37,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${heading.variable} ${mono.variable}`}>{children}<Toaster /></body>
+      <body className={`${inter.variable} ${mono.variable}`}>{children}<Toaster /></body>
     </html>
   );
 }
