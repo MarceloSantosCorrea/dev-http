@@ -347,6 +347,29 @@ function emptyKeyValue(): KeyValue {
   };
 }
 
+function parseUrlQueryParams(url: string): KeyValue[] {
+  const qIndex = url.indexOf("?");
+  if (qIndex === -1) return [];
+  const qs = url.slice(qIndex + 1);
+  return qs
+    .split("&")
+    .filter(Boolean)
+    .map((part) => {
+      const eqIndex = part.indexOf("=");
+      const k = eqIndex === -1 ? part : part.slice(0, eqIndex);
+      const v = eqIndex === -1 ? "" : part.slice(eqIndex + 1);
+      return { id: crypto.randomUUID(), key: k, value: v, enabled: true };
+    });
+}
+
+function buildUrlWithQueryParams(url: string, params: KeyValue[]): string {
+  const base = url.includes("?") ? url.slice(0, url.indexOf("?")) : url;
+  const enabled = params.filter((p) => p.enabled && p.key);
+  if (enabled.length === 0) return base;
+  const qs = enabled.map((p) => (p.value ? `${p.key}=${p.value}` : p.key)).join("&");
+  return `${base}?${qs}`;
+}
+
 function defaultRequest(projectId?: string, collectionId?: string): BootstrapRequest {
   return {
     id: "",
@@ -1209,6 +1232,7 @@ function VariableHighlightInput({
         ref={ref}
         contentEditable={!disabled}
         suppressContentEditableWarning
+        spellCheck={false}
         data-placeholder={placeholder}
         onInput={handleInput}
         onKeyDown={handleKeyDown}
@@ -1216,12 +1240,25 @@ function VariableHighlightInput({
         onMouseMove={handleMouseMove}
         onMouseLeave={() => scheduleClose()}
         onBlur={() => setSuggestions(null)}
+        onMouseDown={(e) => {
+          const el = ref.current;
+          if (!el) return;
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const rects = range.getClientRects();
+          const lastRect = rects[rects.length - 1];
+          if (!lastRect || e.clientX > lastRect.right) {
+            e.preventDefault();
+            el.focus();
+            setCaretOffset(el, el.textContent?.length ?? 0);
+          }
+        }}
         className={cn(
           "var-input h-[34px] w-full rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] px-2.5 text-[var(--text-pri)]",
           "text-sm outline-none",
           "focus-visible:border-[var(--focus-ring)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-alpha)]",
           "whitespace-nowrap overflow-x-auto",
-          "flex items-center",
+          "py-[7px]",
           disabled && "opacity-50 pointer-events-none cursor-not-allowed",
           className,
         )}
@@ -1754,8 +1791,8 @@ function SortableRequestItem({
       className={cn(
         "group/request flex items-center gap-1 w-full min-w-0 pl-2 pr-1 py-px text-xs rounded transition-colors",
         isActive
-          ? "text-[var(--text-pri)] bg-[var(--bg-tertiary)] border-l-2 border-[var(--brand)]"
-          : "text-[var(--text-sec)] hover:text-[var(--text-pri)] hover:bg-[var(--bg-tertiary)]",
+          ? "text-[var(--text-pri)] bg-[var(--item-hl)] border-l-2 border-[var(--brand)]"
+          : "text-[var(--text-pri)] hover:bg-[var(--item-hl)]",
       )}
     >
       <button
@@ -1848,7 +1885,10 @@ function SortableCollectionItem({
   };
   return (
     <div ref={setNodeRef} style={style} className="grid gap-1">
-      <div className="flex items-center gap-1 group/collection">
+      <div className={cn(
+        "flex items-center gap-1 group/collection rounded transition-colors",
+        isSelected ? "bg-[var(--item-hl)]" : "hover:bg-[var(--item-hl)]",
+      )}>
         <button
           type="button"
           {...attributes}
@@ -1862,8 +1902,8 @@ function SortableCollectionItem({
           type="button"
           onClick={() => onSelectCollection(collection.id)}
           className={cn(
-            "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-[var(--bg-tertiary)] transition-colors min-w-0 text-left",
-            isSelected ? "text-[var(--text-pri)] font-medium" : "text-[var(--text-sec)] hover:text-[var(--text-pri)]",
+            "flex-1 flex items-center gap-1 px-1 py-0.5 text-xs min-w-0 text-left transition-colors",
+            isSelected ? "text-[var(--text-pri)] font-medium" : "text-[var(--text-pri)]",
           )}
         >
           <span className="text-[0.65rem] shrink-0 opacity-70">{isExpanded ? "▾" : "▸"}</span>
@@ -1963,8 +2003,8 @@ function SortableEnvironmentItem({
         className={cn(
           "flex items-center gap-1.5 w-full min-w-0 px-1 py-0.5 text-xs rounded transition-colors text-left",
           isActive
-            ? "text-[var(--text-pri)] font-medium"
-            : "text-[var(--text-sec)] hover:text-[var(--text-pri)] hover:bg-[var(--bg-tertiary)]",
+            ? "text-[var(--text-pri)] font-medium bg-[var(--item-hl)] border-l-2 border-[var(--brand)]"
+            : "text-[var(--text-pri)] hover:bg-[var(--item-hl)]",
         )}
       >
         <span className="text-[0.6rem] shrink-0 opacity-50">○</span>
@@ -4395,24 +4435,35 @@ export function DevHttpClient() {
     key: keyof KeyValue,
     value: string | boolean,
   ) {
-    updateRequestTabDraft(activeTabId, (draft) => ({
-      ...draft,
-      [field]: draft[field].map((item) => item.id === rowId ? { ...item, [key]: value } : item),
-    }));
+    updateRequestTabDraft(activeTabId, (draft) => {
+      const updated = draft[field].map((item) =>
+        item.id === rowId ? { ...item, [key]: value } : item,
+      );
+      if (field === "queryParams") {
+        return { ...draft, queryParams: updated, url: buildUrlWithQueryParams(draft.url, updated) };
+      }
+      return { ...draft, [field]: updated };
+    });
   }
 
   function addRow(field: "headers" | "queryParams") {
-    updateRequestTabDraft(activeTabId, (draft) => ({
-      ...draft,
-      [field]: [...draft[field], emptyKeyValue()],
-    }));
+    updateRequestTabDraft(activeTabId, (draft) => {
+      const updated = [...draft[field], emptyKeyValue()];
+      if (field === "queryParams") {
+        return { ...draft, queryParams: updated, url: buildUrlWithQueryParams(draft.url, updated) };
+      }
+      return { ...draft, [field]: updated };
+    });
   }
 
   function removeRow(field: "headers" | "queryParams", rowId: string) {
-    updateRequestTabDraft(activeTabId, (draft) => ({
-      ...draft,
-      [field]: draft[field].filter((item) => item.id !== rowId),
-    }));
+    updateRequestTabDraft(activeTabId, (draft) => {
+      const updated = draft[field].filter((item) => item.id !== rowId);
+      if (field === "queryParams") {
+        return { ...draft, queryParams: updated, url: buildUrlWithQueryParams(draft.url, updated) };
+      }
+      return { ...draft, [field]: updated };
+    });
   }
 
   function updateFormDataField(
@@ -5415,7 +5466,17 @@ export function DevHttpClient() {
                     />
                     <VariableHighlightInput
                       value={draftRequest.url}
-                      onChange={(val) => updateDraft("url", val)}
+                      onChange={(val) => {
+                        updateRequestTabDraft(activeTabId, (draft) => {
+                          const parsed = parseUrlQueryParams(val);
+                          const hasExistingEmpty = draft.queryParams.every((p) => !p.key && !p.value);
+                          return {
+                            ...draft,
+                            url: val,
+                            queryParams: parsed.length > 0 ? parsed : hasExistingEmpty ? draft.queryParams : [emptyKeyValue()],
+                          };
+                        });
+                      }}
                       variables={selectedEnvironment?.variables ?? []}
                       environmentName={selectedEnvironment?.name}
                       onUpdateVariable={(name, val) =>
@@ -5427,7 +5488,7 @@ export function DevHttpClient() {
                         }))
                       }
                       placeholder="https://api.exemplo.com/resource"
-                      className="flex-1"
+                      className="flex-1 font-mono"
                     />
                     {isDirty || isSaving ? (
                       <Button
@@ -5450,27 +5511,20 @@ export function DevHttpClient() {
                     className="flex-1 min-h-0 flex flex-col overflow-hidden"
                   >
                     <TabsList className="shrink-0">
-                      <TabsTrigger value="headers">Headers</TabsTrigger>
                       <TabsTrigger value="queryParams">Query Params</TabsTrigger>
+                      <TabsTrigger value="headers">Headers</TabsTrigger>
                       <TabsTrigger value="body">Body</TabsTrigger>
                       <TabsTrigger value="script">Script</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="headers" className="flex-1 min-h-0 overflow-y-auto mt-2">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Headers
-                        </span>
-                        <Button variant="ghost" size="sm" onClick={() => addRow("headers")}>
-                          + Adicionar
-                        </Button>
-                      </div>
-                      <AutoGeneratedHeadersEditor
-                        items={resolveAutoHeaderPreview(
+                      <HeadersTable
+                        autoItems={resolveAutoHeaderPreview(
                           draftRequest,
                           selectedEnvironment?.variables ?? [],
                         )}
-                        onToggle={(key, enabled) =>
+                        rows={draftRequest.headers}
+                        onToggleAuto={(key, enabled) =>
                           updateRequestTabDraft(activeTabId, (current) => ({
                             ...current,
                             disabledAutoHeaders: toggleAutoHeaderDisabled(
@@ -5480,11 +5534,9 @@ export function DevHttpClient() {
                             ),
                           }))
                         }
-                      />
-                      <KeyValueEditor
-                        rows={draftRequest.headers}
                         onChange={(rowId, key, value) => updateKeyValue("headers", rowId, key, value)}
                         onRemove={(rowId) => removeRow("headers", rowId)}
+                        onAdd={() => addRow("headers")}
                         variables={selectedEnvironment?.variables ?? []}
                         environmentName={selectedEnvironment?.name}
                         onUpdateVariable={(name, val) =>
@@ -6025,9 +6077,21 @@ function KeyValueEditor({
   environmentName?: string;
 }) {
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-1">
+      {/* Header row */}
+      <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center px-1">
+        <span className="w-4" />
+        <span className="text-xs text-muted-foreground">Chave</span>
+        <span className="text-xs text-muted-foreground">Valor</span>
+        <span className="w-6" />
+      </div>
       {rows.map((row) => (
-        <div key={row.id} className="grid grid-cols-[1fr_1.5fr_auto_auto] gap-2 items-center max-[720px]:grid-cols-1">
+        <div key={row.id} className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center max-[720px]:grid-cols-1">
+          <Checkbox
+            checked={row.enabled}
+            onCheckedChange={(checked) => onChange(row.id, "enabled", checked === true)}
+            className="mx-auto"
+          />
           <VariableHighlightInput
             value={row.key}
             onChange={(val) => onChange(row.id, "key", val)}
@@ -6044,13 +6108,6 @@ function KeyValueEditor({
             onUpdateVariable={onUpdateVariable}
             placeholder="Valor"
           />
-          <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground cursor-pointer select-none">
-            <Checkbox
-              checked={row.enabled}
-              onCheckedChange={(checked) => onChange(row.id, "enabled", checked === true)}
-            />
-            Ativo
-          </label>
           <button
             type="button"
             onClick={() => onRemove(row.id)}
@@ -6993,59 +7050,141 @@ function SettingsModal({
   );
 }
 
-function AutoGeneratedHeadersEditor({
-  items,
-  onToggle,
+function HeadersTable({
+  autoItems,
+  rows,
+  onToggleAuto,
+  onChange,
+  onRemove,
+  onAdd,
+  variables = [],
+  onUpdateVariable,
+  environmentName,
 }: {
-  items: AutoHeaderPreview[];
-  onToggle: (key: AutoHeaderKey, enabled: boolean) => void;
+  autoItems: AutoHeaderPreview[];
+  rows: KeyValue[];
+  onToggleAuto: (key: AutoHeaderKey, enabled: boolean) => void;
+  onChange: (rowId: string, key: keyof KeyValue, value: string | boolean) => void;
+  onRemove: (rowId: string) => void;
+  onAdd: () => void;
+  variables?: Variable[];
+  onUpdateVariable?: (name: string, value: string) => void;
+  environmentName?: string;
 }) {
-  const [showAutoHeaders, setShowAutoHeaders] = useState(false);
-  const hiddenCount = items.length;
-
-  if (items.length === 0) {
-    return null;
-  }
+  const [showAutoHeaders, setShowAutoHeaders] = useState(true);
 
   return (
-    <div className="mb-4 rounded-lg border border-border/60 bg-muted/15">
-      <div className="flex items-center justify-between gap-3 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="font-medium">Headers automáticos</span>
-          {!showAutoHeaders ? (
-            <span className="text-xs text-muted-foreground">{hiddenCount} hidden</span>
-          ) : null}
+    <div>
+      {/* Cabeçalho da seção */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Headers
+          </span>
+          {autoItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAutoHeaders((v) => !v)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showAutoHeaders ? "Hide auto-generated headers" : "Show auto-generated headers"}
+            </button>
+          )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          type="button"
-          onClick={() => setShowAutoHeaders((current) => !current)}
-        >
-          {showAutoHeaders ? "Hide auto-generated headers" : "Show auto-generated headers"}
+        <Button variant="ghost" size="sm" type="button" onClick={onAdd}>
+          + Adicionar
         </Button>
       </div>
 
-      {showAutoHeaders ? (
-        <div className="border-t border-border/60">
-          {items.map((item) => (
+      {/* Tabela unificada */}
+      <div className="rounded-md border border-border overflow-hidden">
+        {/* Linha de colunas */}
+        <div className="grid grid-cols-[28px_1fr_1fr_36px] border-b border-border bg-muted/40">
+          <div className="h-7" />
+          <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium">
+            Chave
+          </div>
+          <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium border-l border-border/60">
+            Valor
+          </div>
+          <div className="h-7" />
+        </div>
+
+        {/* Headers automáticos */}
+        {showAutoHeaders &&
+          autoItems.map((item) => (
             <div
               key={item.key}
-              className="grid grid-cols-[auto_minmax(0,220px)_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm"
+              className="grid grid-cols-[28px_1fr_1fr_36px] border-b border-border/60 bg-muted/10"
             >
-              <Checkbox
-                checked={item.state !== "disabled"}
-                onCheckedChange={(checked) => onToggle(item.key, checked === true)}
-              />
-              <Input value={AUTO_HEADER_LABELS[item.key]} readOnly className="bg-background/70" />
-              <Input value={item.value} readOnly className="bg-background/70" />
-              <span className="text-xs text-muted-foreground">
-                {item.state === "overridden" ? "Sobrescrito" : "Auto"}
-              </span>
+              <div className="flex items-center justify-center border-r border-border/60">
+                <Checkbox
+                  checked={item.state !== "disabled"}
+                  onCheckedChange={(checked) => onToggleAuto(item.key, checked === true)}
+                />
+              </div>
+              <div className="flex items-center px-3 text-sm text-muted-foreground border-r border-border/60 min-h-[34px]">
+                {AUTO_HEADER_LABELS[item.key]}
+              </div>
+              <div className="flex items-center px-3 text-sm text-muted-foreground font-mono border-r border-border/60 min-h-[34px] truncate">
+                {item.value}
+              </div>
+              <div className="flex items-center justify-center">
+                <span className="text-[10px] text-muted-foreground">
+                  {item.state === "overridden" ? "↑" : ""}
+                </span>
+              </div>
             </div>
           ))}
-        </div>
-      ) : null}
+
+        {/* Headers customizados */}
+        {rows.map((row, index) => (
+          <div
+            key={row.id}
+            className={cn(
+              "grid grid-cols-[28px_1fr_1fr_36px]",
+              index < rows.length - 1 && "border-b border-border/60",
+            )}
+          >
+            <div className="flex items-center justify-center border-r border-border/60">
+              <Checkbox
+                checked={row.enabled}
+                onCheckedChange={(checked) => onChange(row.id, "enabled", checked === true)}
+              />
+            </div>
+            <div className="border-r border-border/60">
+              <VariableHighlightInput
+                value={row.key}
+                onChange={(val) => onChange(row.id, "key", val)}
+                variables={variables}
+                environmentName={environmentName}
+                onUpdateVariable={onUpdateVariable}
+                placeholder="Chave"
+              />
+            </div>
+            <div className="border-r border-border/60">
+              <VariableHighlightInput
+                value={row.value}
+                onChange={(val) => onChange(row.id, "value", val)}
+                variables={variables}
+                environmentName={environmentName}
+                onUpdateVariable={onUpdateVariable}
+                placeholder="Valor"
+              />
+            </div>
+            <div className="flex items-center justify-center">
+              <button
+                type="button"
+                onClick={() => onRemove(row.id)}
+                className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                title="Remover"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

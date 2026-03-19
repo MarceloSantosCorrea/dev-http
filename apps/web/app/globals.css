@@ -7,6 +7,7 @@
 /* Legacy vars (theme-independent) */
 :root {
   --warn: #ff8c69;
+  --success: #3DAB2E;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
   --radius: 0.25rem;
 }
@@ -26,6 +27,7 @@ html.dark {
   --hdr-bg: #262626;
   --hdr-txt: #A6A6A6;
   --hdr-hl: #303030;
+  --item-hl: #303030;
   --brand: #FF6C37;
   --brand-h: #ED5B2A;
   --brand-a: #D03E0A;
@@ -78,6 +80,7 @@ html:not(.dark) {
   --hdr-bg: #212121;
   --hdr-txt: #A6A6A6;
   --hdr-hl: #303030;
+  --item-hl: #EDEDED;
   --brand: #FF6C37;
   --brand-h: #ED5B2A;
   --brand-a: #D03E0A;
@@ -220,7 +223,7 @@ html.dark .method-pill.options { color: #EB79B7; }
 .method-pill.options { color: #B93B85; }
 
 /* Variable highlight spans inside contenteditable */
-[data-var-resolved="true"]  { color: var(--primary); font-weight: 500; }
+[data-var-resolved="true"]  { color: var(--success); font-weight: 500; }
 [data-var-resolved="empty"] { color: var(--warn);    font-weight: 500; }
 [data-var-resolved="false"] { color: var(--warn);    font-weight: 500; }
 
