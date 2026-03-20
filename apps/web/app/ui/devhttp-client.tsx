@@ -2542,21 +2542,11 @@ export function DevHttpClient() {
   const canRenameProjectEntities =
     membershipRole === "owner" || membershipRole === "admin" || membershipRole === "editor";
 
-  const isEnvironmentDirty = useMemo(() => {
-    if (!selectedEnvironment) return false;
-    return JSON.stringify(selectedEnvironment) !== savedEnvironmentSnapshot;
-  }, [selectedEnvironment, savedEnvironmentSnapshot]);
-
   const handleSaveEnvironmentRef = useRef(handleSaveEnvironment);
   useEffect(() => {
     handleSaveEnvironmentRef.current = handleSaveEnvironment;
   });
 
-  useEffect(() => {
-    if (!isEnvironmentDirty) return;
-    const timer = setTimeout(() => void handleSaveEnvironmentRef.current(), 800);
-    return () => clearTimeout(timer);
-  }, [selectedEnvironment, isEnvironmentDirty]);
   const isProfileDirty = useMemo(
     () => JSON.stringify(profileForm) !== JSON.stringify(savedProfileForm) || Boolean(avatarSource),
     [avatarSource, profileForm, savedProfileForm],
@@ -2567,6 +2557,32 @@ export function DevHttpClient() {
   );
 
   const activeEditorTab = openTabs.find(t => t.tabId === activeTabId) ?? null;
+
+  const editedEnvironment = useMemo(() => {
+    if (activeEditorTab?.type !== "environment") return null;
+    return (
+      selectedProject?.environments.find(
+        (environment) => environment.id === activeEditorTab.environmentId,
+      ) ?? null
+    );
+  }, [activeEditorTab, selectedProject]);
+
+  const isEnvironmentDirty = useMemo(() => {
+    if (!editedEnvironment) return false;
+    return JSON.stringify(editedEnvironment) !== savedEnvironmentSnapshot;
+  }, [editedEnvironment, savedEnvironmentSnapshot]);
+
+  useEffect(() => {
+    if (!isEnvironmentDirty) return;
+    const timer = setTimeout(() => void handleSaveEnvironmentRef.current(), 800);
+    return () => clearTimeout(timer);
+  }, [editedEnvironment, isEnvironmentDirty]);
+
+  useEffect(() => {
+    setSavedEnvironmentSnapshot(
+      editedEnvironment ? JSON.stringify(editedEnvironment) : "",
+    );
+  }, [editedEnvironment?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const draftRequest: BootstrapRequest =
     activeEditorTab?.type === "request"
@@ -3691,7 +3707,7 @@ export function DevHttpClient() {
   }
 
   async function handleSaveEnvironment() {
-    if (!auth || !selectedProject || !selectedEnvironment) {
+    if (!auth || !selectedProject || !editedEnvironment) {
       return;
     }
 
@@ -3700,7 +3716,7 @@ export function DevHttpClient() {
       const saved = await requestJson<Environment>(`/projects/${selectedProject.id}/environments`, {
         method: "POST",
         headers: authHeaders(auth.token),
-        body: JSON.stringify(selectedEnvironment),
+        body: JSON.stringify(editedEnvironment),
       });
 
       setBootstrap((current) =>
@@ -3715,7 +3731,6 @@ export function DevHttpClient() {
             }
           : current,
       );
-      setSelectedEnvironmentId(saved.id);
       setSavedEnvironmentSnapshot(JSON.stringify(saved));
       setEnvironmentConflictId("");
     } catch (error) {
@@ -5144,6 +5159,34 @@ export function DevHttpClient() {
     );
   }
 
+  function updateEditedEnvironmentState(
+    updater: (environment: Environment) => Environment,
+  ) {
+    if (!selectedProject || !editedEnvironment) {
+      return;
+    }
+
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            projects: current.projects.map((project) =>
+              project.id === selectedProject.id
+                ? {
+                    ...project,
+                    environments: project.environments.map((environment) =>
+                      environment.id === editedEnvironment.id
+                        ? updater(environment)
+                        : environment,
+                    ),
+                  }
+                : project,
+            ),
+          }
+        : current,
+    );
+  }
+
   if (isSessionLoading) {
     return (
       <main className="min-h-screen grid place-items-center p-8">
@@ -6064,16 +6107,16 @@ export function DevHttpClient() {
                     Variaveis de ambiente
                   </p>
                   <h3 className="text-lg font-semibold">
-                    {selectedEnvironment?.name ?? "Selecione um ambiente"}
+                    {editedEnvironment?.name ?? "Selecione um ambiente"}
                   </h3>
                 </div>
 
-                {selectedEnvironment ? (
+                {editedEnvironment ? (
                   <>
                     <Input
-                      value={selectedEnvironment.name}
+                      value={editedEnvironment.name}
                       onChange={(event) =>
-                        updateEnvironmentState((environment) => ({
+                        updateEditedEnvironmentState((environment) => ({
                           ...environment,
                           name: event.target.value,
                         }))
@@ -6081,9 +6124,10 @@ export function DevHttpClient() {
                       placeholder="Nome do ambiente"
                     />
                     <VariableEditor
-                      variables={selectedEnvironment.variables}
+                      key={editedEnvironment.id}
+                      variables={editedEnvironment.variables}
                       onChange={(variables) =>
-                        updateEnvironmentState((environment) => ({
+                        updateEditedEnvironmentState((environment) => ({
                           ...environment,
                           variables,
                         }))
