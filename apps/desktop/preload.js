@@ -30,4 +30,5 @@ contextBridge.exposeInMainWorld("devHttpDesktop", {
   loadCredentials: () => ipcRenderer.invoke("devhttp:load-credentials"),
   saveCredentials: (email, password) => ipcRenderer.invoke("devhttp:save-credentials", email, password),
   clearCredentials: () => ipcRenderer.invoke("devhttp:clear-credentials"),
+  appVersion: () => ipcRenderer.invoke("devhttp:app-version"),
 });

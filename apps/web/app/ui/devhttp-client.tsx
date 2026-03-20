@@ -6956,6 +6956,13 @@ function SettingsModal({
   onRemoveWorkspaceMember: (memberUserId: string) => void;
   onRevokeWorkspaceInvite: (inviteId: string) => void;
 }) {
+  const [desktopVersion, setDesktopVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (window.devHttpDesktop) {
+      void window.devHttpDesktop.appVersion().then(setDesktopVersion);
+    }
+  }, []);
+
   if (!open) {
     return null;
   }
@@ -6967,7 +6974,7 @@ function SettingsModal({
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4">
       <Card className="w-full max-w-4xl overflow-hidden bg-background">
         <div className="grid max-h-[85vh] min-h-[32rem] md:grid-cols-[220px_minmax(0,1fr)]">
-          <div className="border-b border-border/60 bg-muted/20 p-4 md:border-b-0 md:border-r">
+          <div className="flex flex-col border-b border-border/60 bg-muted/20 p-4 md:border-b-0 md:border-r">
             <div className="mb-6 flex items-center gap-3">
               <UserAvatar user={user} size="lg" srcOverride={avatarPreview} />
               <div className="min-w-0">
@@ -6996,6 +7003,12 @@ function SettingsModal({
                 </button>
               ))}
             </div>
+
+            {desktopVersion && (
+              <p className="mt-auto pt-4 text-xs text-muted-foreground">
+                v{desktopVersion}
+              </p>
+            )}
           </div>
 
           <div className="flex min-h-0 flex-col">

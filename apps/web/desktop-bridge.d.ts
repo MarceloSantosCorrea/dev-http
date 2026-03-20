@@ -42,6 +42,7 @@ declare global {
       loadCredentials: () => Promise<{ email: string; password: string } | null>;
       saveCredentials: (email: string, password: string) => Promise<boolean>;
       clearCredentials: () => Promise<boolean>;
+      appVersion: () => Promise<string>;
     };
   }
 }
