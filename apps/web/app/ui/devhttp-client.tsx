@@ -473,7 +473,6 @@ function JsonBodyEditor({ value, onChange, variables = [] }: { value: string; on
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
-          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
@@ -509,7 +508,6 @@ function TextBodyEditor({ value, onChange, variables = [] }: { value: string; on
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
-          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
@@ -606,7 +604,6 @@ function ScriptEditor({ value, onChange }: { value: string; onChange: (val: stri
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
-          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
