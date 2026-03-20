@@ -60,7 +60,9 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import CodeMirror from "@uiw/react-codemirror";
 import { json, jsonParseLinter } from "@codemirror/lang-json";
+import { javascript, localCompletionSource, javascriptLanguage } from "@codemirror/lang-javascript";
 import { linter } from "@codemirror/lint";
+import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 
@@ -402,7 +404,28 @@ const varHighlightPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-function JsonBodyEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+function varCompletionSource(variables: Variable[]) {
+  return (context: CompletionContext): CompletionResult | null => {
+    const match = context.matchBefore(/\{\{[a-zA-Z0-9_.-]*/);
+    if (!match) return null;
+    const query = match.text.slice(2);
+    const filtered = variables.filter(
+      (v) => v.enabled && v.key.toLowerCase().includes(query.toLowerCase()),
+    );
+    if (filtered.length === 0 && !context.explicit) return null;
+    return {
+      from: match.from + 2,
+      options: filtered.map((v) => ({
+        label: v.key,
+        apply: v.key + "}}",
+        detail: v.secret ? "••••" : v.value || "(vazio)",
+        boost: 1,
+      })),
+    };
+  };
+}
+
+function JsonBodyEditor({ value, onChange, variables = [] }: { value: string; onChange: (val: string) => void; variables?: Variable[] }) {
   const [isDark, setIsDark] = useState(false);
   useEffect(() => {
     const update = () => setIsDark(document.documentElement.classList.contains("dark"));
@@ -416,7 +439,7 @@ function JsonBodyEditor({ value, onChange }: { value: string; onChange: (val: st
       <CodeMirror
         value={value}
         onChange={onChange}
-        extensions={[json(), linter(jsonParseLinter()), varHighlightPlugin]}
+        extensions={[json(), linter(jsonParseLinter()), varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true })]}
         theme={isDark ? "dark" : "light"}
         basicSetup={{
           lineNumbers: true,
@@ -437,7 +460,7 @@ function JsonBodyEditor({ value, onChange }: { value: string; onChange: (val: st
   );
 }
 
-function TextBodyEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+function TextBodyEditor({ value, onChange, variables = [] }: { value: string; onChange: (val: string) => void; variables?: Variable[] }) {
   const [isDark, setIsDark] = useState(false);
   useEffect(() => {
     const update = () => setIsDark(document.documentElement.classList.contains("dark"));
@@ -451,7 +474,7 @@ function TextBodyEditor({ value, onChange }: { value: string; onChange: (val: st
       <CodeMirror
         value={value}
         onChange={onChange}
-        extensions={[varHighlightPlugin]}
+        extensions={[varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true })]}
         theme={isDark ? "dark" : "light"}
         basicSetup={{
           lineNumbers: true,
@@ -461,6 +484,101 @@ function TextBodyEditor({ value, onChange }: { value: string; onChange: (val: st
           indentOnInput: false,
           bracketMatching: false,
           closeBrackets: false,
+          autocompletion: false,
+          highlightActiveLine: false,
+          highlightSelectionMatches: false,
+          searchKeymap: false,
+        }}
+        style={{ fontSize: "13px" }}
+      />
+    </div>
+  );
+}
+
+function scriptContextCompletionSource(context: CompletionContext): CompletionResult | null {
+  const dotMatch = context.matchBefore(/(\w+)\.\w*/);
+  if (dotMatch) {
+    const obj = dotMatch.text.split(".")[0];
+    const afterDot = context.matchBefore(/\.\w*/);
+    const from = afterDot!.from + 1;
+
+    if (obj === "response") {
+      return {
+        from,
+        options: [
+          { label: "status",  type: "property", detail: "número (ex: 200)" },
+          { label: "headers", type: "property", detail: "objeto com os headers" },
+          { label: "body",    type: "property", detail: "body como string" },
+          { label: "json",    type: "method",   detail: "json() → parsed body" },
+        ],
+      };
+    }
+    if (obj === "env") {
+      return {
+        from,
+        options: [
+          { label: "get",   type: "method", detail: "get(name) → string" },
+          { label: "set",   type: "method", detail: "set(name, value)" },
+          { label: "unset", type: "method", detail: "unset(name)" },
+        ],
+      };
+    }
+    if (obj === "console") {
+      return {
+        from,
+        options: [
+          { label: "log",   type: "method" },
+          { label: "warn",  type: "method" },
+          { label: "error", type: "method" },
+        ],
+      };
+    }
+    return null;
+  }
+
+  const word = context.matchBefore(/\w*/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+
+  return {
+    from: word.from,
+    options: [
+      { label: "response", type: "variable", detail: "objeto da resposta HTTP" },
+      { label: "env",      type: "variable", detail: "variáveis de ambiente" },
+      { label: "test",     type: "function", detail: "test(name, passed)" },
+      { label: "console",  type: "variable", detail: "console de saída" },
+    ],
+  };
+}
+
+function ScriptEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+  const [isDark, setIsDark] = useState(false);
+  useEffect(() => {
+    const update = () => setIsDark(document.documentElement.classList.contains("dark"));
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className="json-body-editor rounded border border-[var(--bd-str)] overflow-hidden text-sm">
+      <CodeMirror
+        value={value}
+        onChange={onChange}
+        extensions={[
+          javascript(),
+          javascriptLanguage.data.of({ autocomplete: localCompletionSource }),
+          javascriptLanguage.data.of({ autocomplete: scriptContextCompletionSource }),
+          autocompletion({ activateOnTyping: true }),
+        ]}
+        theme={isDark ? "dark" : "light"}
+        basicSetup={{
+          lineNumbers: true,
+          foldGutter: false,
+          dropCursor: false,
+          allowMultipleSelections: false,
+          indentOnInput: true,
+          bracketMatching: true,
+          closeBrackets: true,
           autocompletion: false,
           highlightActiveLine: false,
           highlightSelectionMatches: false,
@@ -5767,12 +5885,14 @@ export function DevHttpClient() {
                           key="json-body-editor"
                           value={draftRequest.body}
                           onChange={(val) => updateDraft("body", val)}
+                          variables={selectedEnvironment?.variables ?? []}
                         />
                       ) : (
                         <TextBodyEditor
                           key="text-body-editor"
                           value={draftRequest.body}
                           onChange={(val) => updateDraft("body", val)}
+                          variables={selectedEnvironment?.variables ?? []}
                         />
                       )}
                     </TabsContent>
@@ -5783,7 +5903,7 @@ export function DevHttpClient() {
                           Script pos-request
                         </span>
                       </div>
-                      <TextBodyEditor
+                      <ScriptEditor
                         value={draftRequest.postResponseScript}
                         onChange={(val) => updateDraft("postResponseScript", val)}
                       />

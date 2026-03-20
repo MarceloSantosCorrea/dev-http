@@ -77,9 +77,9 @@ html:not(.dark) {
   --text-pri: #212121;
   --text-sec: #6B6B6B;
   --text-ter: #A6A6A6;
-  --hdr-bg: #212121;
-  --hdr-txt: #A6A6A6;
-  --hdr-hl: #303030;
+  --hdr-bg: #F9F9F9;
+  --hdr-txt: #6B6B6B;
+  --hdr-hl: #EDEDED;
   --item-hl: #EDEDED;
   --brand: #FF6C37;
   --brand-h: #ED5B2A;

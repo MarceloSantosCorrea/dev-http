@@ -19,8 +19,8 @@ const TITLE_BAR_THEME = {
     symbolColor: "#A6A6A6",
   },
   light: {
-    color: "#212121",
-    symbolColor: "#A6A6A6",
+    color: "#F9F9F9",
+    symbolColor: "#6B6B6B",
   },
 };
 
