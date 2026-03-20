@@ -3361,7 +3361,10 @@ export function DevHttpClient() {
     };
   }
 
-  async function persistUpdatedEnvironmentVariables(updatedVariables: Variable[]) {
+  async function persistUpdatedEnvironmentVariables(
+    updatedVariables: Variable[],
+    { persist = true }: { persist?: boolean } = {},
+  ) {
     if (!auth || !selectedProject || !selectedEnvironmentId || !selectedEnvironment) {
       return;
     }
@@ -3391,18 +3394,20 @@ export function DevHttpClient() {
     setSavedEnvironmentSnapshot(JSON.stringify(nextEnvironment));
     setEnvironmentConflictId("");
 
-    try {
-      await requestJson<Environment>(`/projects/${selectedProject.id}/environments`, {
-        method: "POST",
-        headers: authHeaders(auth.token),
-        body: JSON.stringify(nextEnvironment),
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? `A execução local funcionou, mas falhou ao persistir variáveis: ${error.message}`
-          : "A execução local funcionou, mas falhou ao persistir variáveis.",
-      );
+    if (persist) {
+      try {
+        await requestJson<Environment>(`/projects/${selectedProject.id}/environments`, {
+          method: "POST",
+          headers: authHeaders(auth.token),
+          body: JSON.stringify(nextEnvironment),
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? `A execução local funcionou, mas falhou ao persistir variáveis: ${error.message}`
+            : "A execução local funcionou, mas falhou ao persistir variáveis.",
+        );
+      }
     }
   }
 
@@ -3457,8 +3462,11 @@ export function DevHttpClient() {
             : "Request executada.",
       );
 
-      if (useLocalExecution && result.scriptResult?.updatedVariables && selectedEnvironmentId) {
-        void persistUpdatedEnvironmentVariables(result.scriptResult.updatedVariables);
+      if (result.scriptResult?.updatedVariables && selectedEnvironmentId) {
+        void persistUpdatedEnvironmentVariables(
+          result.scriptResult.updatedVariables,
+          { persist: useLocalExecution },
+        );
       }
     } catch (error) {
       if (isLocalAgentRequiredError(error) || (error instanceof Error && error.message === LOCAL_AGENT_REQUIRED_MESSAGE)) {
