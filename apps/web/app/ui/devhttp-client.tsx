@@ -5268,67 +5268,134 @@ export function DevHttpClient() {
   return (
     <>
       <div className="h-screen flex flex-col overflow-hidden">
-        {hasDesktopBridge && (
+        <div
+          className={cn(
+            "shrink-0 h-[37px] flex items-center bg-[var(--hdr-bg)] border-b border-[var(--bd-def)] select-none",
+            hasDesktopBridge && desktopPlatform !== "darwin" && "desktop-titlebar-drag",
+          )}
+          onDoubleClick={hasDesktopBridge ? handleDesktopTitleBarDoubleClick : undefined}
+          onPointerDown={hasDesktopBridge ? handleDesktopTitleBarPointerDown : undefined}
+          onPointerMove={hasDesktopBridge ? handleDesktopTitleBarPointerMove : undefined}
+          onPointerUp={hasDesktopBridge ? finishDesktopTitleBarDrag : undefined}
+          onPointerCancel={hasDesktopBridge ? finishDesktopTitleBarDrag : undefined}
+          style={{ touchAction: isWindowMaximized ? "none" : "auto" }}
+        >
+          {/* LEFT: WorkspaceSelect */}
           <div
-            className={cn(
-              "shrink-0 h-[37px] flex items-center bg-[var(--hdr-bg)] border-b border-[var(--bd-def)] select-none",
-              desktopPlatform !== "darwin" && "desktop-titlebar-drag",
-            )}
-            onDoubleClick={handleDesktopTitleBarDoubleClick}
-            onPointerDown={handleDesktopTitleBarPointerDown}
-            onPointerMove={handleDesktopTitleBarPointerMove}
-            onPointerUp={finishDesktopTitleBarDrag}
-            onPointerCancel={finishDesktopTitleBarDrag}
-            style={{ touchAction: isWindowMaximized ? "none" : "auto" }}
+            className="flex items-center px-3"
+            style={desktopPlatform === "darwin" ? { paddingLeft: 76 } : undefined}
+            data-titlebar-no-drag="true"
           >
-            <div
-              className="flex items-center flex-1 px-3"
-              style={
-                desktopPlatform === "darwin"
-                  ? { paddingLeft: 76 }
-                  : usesNativeWindowControls
-                    ? { paddingRight: 138 }
-                    : undefined
-              }
-            >
-              <span className="text-sm font-semibold text-[var(--hdr-txt)]">DevHttp</span>
-            </div>
-            {!usesNativeWindowControls && desktopPlatform !== "darwin" && (
-              <div
-                className="flex h-full desktop-titlebar-no-drag"
-                data-titlebar-no-drag="true"
-              >
-                <button
-                  onClick={() => window.devHttpDesktop?.minimizeWindow()}
-                  data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
-                  title="Minimizar"
-                  type="button"
-                >
-                  ─
-                </button>
-                <button
-                  onClick={() => window.devHttpDesktop?.maximizeWindow()}
-                  data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
-                  title={isWindowMaximized ? "Restaurar" : "Maximizar"}
-                  type="button"
-                >
-                  {isWindowMaximized ? "❐" : "□"}
-                </button>
-                <button
-                  onClick={() => window.devHttpDesktop?.closeWindow()}
-                  data-titlebar-no-drag="true"
-                  className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-red-600 hover:text-white transition-colors desktop-titlebar-no-drag"
-                  title="Fechar"
-                  type="button"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
+            <WorkspaceSelect
+              workspaceId={auth.workspaceId}
+              workspaces={auth.workspaces}
+              onChange={handleWorkspaceChange}
+            />
           </div>
-        )}
+
+          {/* CENTER: Search */}
+          <div className="flex-1 flex justify-center px-4" data-titlebar-no-drag="true">
+            <Input
+              value={projectSearch}
+              onChange={(event) => setProjectSearch(event.target.value)}
+              placeholder="Pesquisar projeto"
+              className="h-[26px] max-w-sm text-xs"
+            />
+          </div>
+
+          {/* RIGHT: Notifications + UserAvatar */}
+          <div
+            className="flex items-center gap-1 px-3"
+            style={usesNativeWindowControls ? { paddingRight: 138 } : undefined}
+            data-titlebar-no-drag="true"
+          >
+            <div ref={notificationsRef}>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={() => {
+                  if (notificationsAnchor) {
+                    setNotificationsAnchor(null);
+                  } else if (notificationsRef.current) {
+                    const rect = notificationsRef.current.getBoundingClientRect();
+                    setNotificationsAnchor({ x: rect.left, y: rect.bottom + 4 });
+                  }
+                }}
+                title="Notificações"
+              >
+                <Bell className="size-3.5" />
+                {notifications.some((item) => !item.readAt) ? (
+                  <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-destructive" />
+                ) : null}
+              </Button>
+            </div>
+            <div ref={userMenuRef} className="relative">
+              <button
+                type="button"
+                className="flex items-center justify-center w-7 h-7 rounded border border-[var(--bd-def)] bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] transition-colors overflow-hidden"
+                onClick={() => setIsUserMenuOpen((current) => !current)}
+                title={bootstrap.user.name}
+              >
+                <UserAvatar user={bootstrap.user} />
+              </button>
+              {isUserMenuOpen ? (
+                <div className="absolute top-full right-0 mt-1 z-30 min-w-36 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
+                  <button
+                    type="button"
+                    className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
+                    onClick={() => openSettings("profile")}
+                  >
+                    Configurações
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
+                    onClick={() => void handleLogout()}
+                  >
+                    Sair
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Custom window controls (apenas quando !usesNativeWindowControls && desktop Windows) */}
+          {!usesNativeWindowControls && desktopPlatform !== "darwin" && hasDesktopBridge && (
+            <div
+              className="flex h-full desktop-titlebar-no-drag"
+              data-titlebar-no-drag="true"
+            >
+              <button
+                onClick={() => window.devHttpDesktop?.minimizeWindow()}
+                data-titlebar-no-drag="true"
+                className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
+                title="Minimizar"
+                type="button"
+              >
+                ─
+              </button>
+              <button
+                onClick={() => window.devHttpDesktop?.maximizeWindow()}
+                data-titlebar-no-drag="true"
+                className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-[var(--hdr-hl)] hover:text-white transition-colors desktop-titlebar-no-drag"
+                title={isWindowMaximized ? "Restaurar" : "Maximizar"}
+                type="button"
+              >
+                {isWindowMaximized ? "❐" : "□"}
+              </button>
+              <button
+                onClick={() => window.devHttpDesktop?.closeWindow()}
+                data-titlebar-no-drag="true"
+                className="flex items-center justify-center w-11 h-full text-[var(--hdr-txt)] hover:bg-red-600 hover:text-white transition-colors desktop-titlebar-no-drag"
+                title="Fechar"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
       <main
         className={cn(
           "flex-1 overflow-hidden grid transition-[grid-template-columns] duration-200 max-[1180px]:grid-cols-1",
@@ -5343,13 +5410,7 @@ export function DevHttpClient() {
           )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto pl-0.5 pr-1 grid gap-3 content-start">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h1 className="text-lg font-bold leading-tight">DevHttp</h1>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {bootstrap.user.name} · {bootstrap.membership.role}
-                </p>
-              </div>
+            <div className="flex items-center justify-end">
               <button
                 onClick={handleToggleSidebar}
                 className="flex items-center justify-center w-6 h-6 rounded border border-[var(--bd-def)] hover:bg-[var(--bg-tertiary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors"
@@ -5361,41 +5422,6 @@ export function DevHttpClient() {
             </div>
 
             <div className="flex items-center gap-2">
-              <WorkspaceSelect
-                workspaceId={auth.workspaceId}
-                workspaces={auth.workspaces}
-                onChange={handleWorkspaceChange}
-              />
-              <div ref={notificationsRef}>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => {
-                    if (notificationsAnchor) {
-                      setNotificationsAnchor(null);
-                    } else if (notificationsRef.current) {
-                      const rect = notificationsRef.current.getBoundingClientRect();
-                      setNotificationsAnchor({ x: rect.left, y: rect.bottom + 4 });
-                    }
-                  }}
-                  title="Notificações"
-                >
-                  <Bell className="size-4" />
-                  {notifications.some((item) => !item.readAt) ? (
-                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
-                  ) : null}
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Input
-                value={projectSearch}
-                onChange={(event) => setProjectSearch(event.target.value)}
-                placeholder="Pesquisar projeto"
-                className="h-8"
-              />
               <div ref={newMenuRef}>
                 <Button
                   variant="outline"
@@ -5655,42 +5681,6 @@ export function DevHttpClient() {
                 Nenhum projeto encontrado.
               </p>
             ) : null}
-            </div>
-          </div>
-
-          <div className="mt-auto border-t border-[var(--bd-def)] pt-2">
-            <div ref={userMenuRef} className="relative">
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded border border-[var(--bd-def)] bg-[var(--bg-tertiary)] px-3 py-2 text-left hover:bg-[var(--bg-secondary)] transition-colors"
-                onClick={() => setIsUserMenuOpen((current) => !current)}
-              >
-                <UserAvatar user={bootstrap.user} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{bootstrap.user.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{bootstrap.user.email}</p>
-                </div>
-                <span className="text-muted-foreground">⋯</span>
-              </button>
-
-              {isUserMenuOpen ? (
-                <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
-                  <button
-                    type="button"
-                    className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-                    onClick={() => openSettings("profile")}
-                  >
-                    Configurações
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full rounded px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
-                    onClick={() => void handleLogout()}
-                  >
-                    Sair
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
 
