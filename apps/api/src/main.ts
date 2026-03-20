@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 
 import { AppModule } from "./app.module";
 import { getClientInstanceId } from "./auth/auth-http";
-import { getAllowedOrigins } from "./http-config";
+import { getAllowedOrigins, isOriginAllowed, parseConfiguredOrigins } from "./http-config";
 import { runWithRequestContext } from "./request-context";
 
 config({ path: resolve(process.cwd(), ".env") });
@@ -27,10 +27,10 @@ async function bootstrap() {
   });
   app.use(json({ limit: "10mb" }));
   app.use(urlencoded({ extended: true, limit: "10mb" }));
-  const allowedOrigins = getAllowedOrigins();
+  const allowedOrigins = parseConfiguredOrigins();
   app.enableCors({
     origin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || isOriginAllowed(origin, allowedOrigins)) {
         callback(null, true);
         return;
       }

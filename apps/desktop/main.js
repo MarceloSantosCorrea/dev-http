@@ -14,12 +14,14 @@ const CREDENTIALS_FILE = "saved-credentials.json";
 const TITLEBAR_THEME_FILE = "titlebar-theme.json";
 const TITLE_BAR_HEIGHT = 36;
 const DESKTOP_RELEASES_API_URL = "https://api.github.com/repos/MarceloSantosCorrea/dev-http/releases";
-const TITLE_BAR_THEME = {
+const WINDOW_THEME = {
   dark: {
+    backgroundColor: "#212121",
     color: "#262626",
     symbolColor: "#A6A6A6",
   },
   light: {
+    backgroundColor: "#FFFFFF",
     color: "#F9F9F9",
     symbolColor: "#6B6B6B",
   },
@@ -172,17 +174,19 @@ let mainWindow = null;
 function createWindow() {
   const targetUrl = getTargetUrl();
   const allowedOrigin = new URL(targetUrl).origin;
+  const initialTheme = readSavedWindowTheme();
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
-    backgroundColor: "#212121",
+    backgroundColor: WINDOW_THEME[initialTheme].backgroundColor,
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
     titleBarOverlay:
       process.platform === "darwin"
         ? false
         : {
-            ...TITLE_BAR_THEME[readSavedTitleBarTheme()],
+            color: WINDOW_THEME[initialTheme].color,
+            symbolColor: WINDOW_THEME[initialTheme].symbolColor,
             height: TITLE_BAR_HEIGHT,
           },
     webPreferences: {
@@ -236,11 +240,14 @@ function setTitleBarTheme(theme) {
   }
 
   const resolvedTheme = theme === "light" ? "light" : "dark";
+  const nextTheme = WINDOW_THEME[resolvedTheme];
+  mainWindow.setBackgroundColor(nextTheme.backgroundColor);
   mainWindow.setTitleBarOverlay({
-    ...TITLE_BAR_THEME[resolvedTheme],
+    color: nextTheme.color,
+    symbolColor: nextTheme.symbolColor,
     height: TITLE_BAR_HEIGHT,
   });
-  writeSavedTitleBarTheme(resolvedTheme);
+  writeSavedWindowTheme(resolvedTheme);
   return true;
 }
 
@@ -356,7 +363,7 @@ function deleteSavedCredentials() {
   } catch {}
 }
 
-function readSavedTitleBarTheme() {
+function readSavedWindowTheme() {
   try {
     const filePath = path.join(app.getPath("userData"), TITLEBAR_THEME_FILE);
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -367,7 +374,7 @@ function readSavedTitleBarTheme() {
   }
 }
 
-function writeSavedTitleBarTheme(theme) {
+function writeSavedWindowTheme(theme) {
   try {
     const filePath = path.join(app.getPath("userData"), TITLEBAR_THEME_FILE);
     fs.writeFileSync(filePath, JSON.stringify({ theme }), "utf-8");

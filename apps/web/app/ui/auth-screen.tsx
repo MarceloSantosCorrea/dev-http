@@ -15,7 +15,10 @@ import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:4000`
+    : "http://localhost:4000");
 const DESKTOP_DOWNLOAD_URL = "/api/download/desktop";
 
 type SessionResponse = {

@@ -79,7 +79,10 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:4000`
+    : "http://localhost:4000");
 const DESKTOP_DOWNLOAD_URL = "/api/download/desktop";
 const AGENT_DOWNLOAD_URL = "/api/download/agent";
 const CLIENT_INSTANCE_HEADER_NAME = "x-devhttp-client-instance";
@@ -357,9 +360,19 @@ function resolveAutoHeaderPreview(
   });
 }
 
+function generateId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 function emptyKeyValue(): KeyValue {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     key: "",
     value: "",
     enabled: true,
@@ -377,7 +390,7 @@ function parseUrlQueryParams(url: string): KeyValue[] {
       const eqIndex = part.indexOf("=");
       const k = eqIndex === -1 ? part : part.slice(0, eqIndex);
       const v = eqIndex === -1 ? "" : part.slice(eqIndex + 1);
-      return { id: crypto.randomUUID(), key: k, value: v, enabled: true };
+      return { id: generateId(), key: k, value: v, enabled: true };
     });
 }
 
@@ -632,7 +645,7 @@ function defaultRequest(projectId?: string, collectionId?: string): BootstrapReq
 
 function emptyFormDataField(type: FormDataField["type"] = "text"): FormDataField {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     key: "",
     value: "",
     enabled: true,
@@ -4774,7 +4787,7 @@ export function DevHttpClient() {
       toast("Crie uma coleção antes de adicionar uma request.");
       return;
     }
-    const tabId = crypto.randomUUID();
+    const tabId = generateId();
     const draft = defaultRequest(selectedProject.id, targetCollectionId);
     setOpenTabs((prev) => [...prev, createRequestEditorTab(draft, { tabId })]);
     setActiveTabId(tabId);
