@@ -4801,16 +4801,13 @@ export function DevHttpClient() {
       return [...prev, createEnvironmentEditorTab(environmentId, { tabId })];
     });
     setActiveTabId(tabId);
-    setSelectedEnvironmentId(environmentId);
     setCollectionMenu(null);
   }
 
   function activateTab(tabId: string) {
     setActiveTabId(tabId);
     const tab = openTabs.find((t) => t.tabId === tabId);
-    if (tab?.type === "environment") {
-      setSelectedEnvironmentId(tab.environmentId);
-    } else if (tab?.type === "request") {
+    if (tab?.type === "request") {
       setSelectedCollectionId(tab.draft.collectionId ?? "");
     }
   }
