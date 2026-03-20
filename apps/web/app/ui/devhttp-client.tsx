@@ -10,7 +10,7 @@ import {
   useTransition,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bell, ChevronDown, Copy, GripVertical, Pencil } from "lucide-react";
+import { Bell, ChevronDown, Copy, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -1869,6 +1869,7 @@ function SortableRequestItem({
   onSelect,
   onRename,
   onDuplicate,
+  onDelete,
 }: {
   request: BootstrapRequest;
   isActive: boolean;
@@ -1877,6 +1878,7 @@ function SortableRequestItem({
   onSelect: (req: BootstrapRequest) => void;
   onRename: (id: string, name: string) => void;
   onDuplicate: (req: BootstrapRequest) => void;
+  onDelete: (req: BootstrapRequest) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: request.id,
@@ -1942,6 +1944,16 @@ function SortableRequestItem({
           <Pencil className="h-3 w-3" />
         </button>
       ) : null}
+      {canRename ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(request); }}
+          className="flex items-center justify-center w-5 h-5 rounded opacity-0 group-hover/request:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all shrink-0"
+          title="Remover request"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1960,6 +1972,7 @@ function SortableCollectionItem({
   onSelectRequest,
   onRenameRequest,
   onDuplicateRequest,
+  onDeleteRequest,
   onRequestDragEnd,
 }: {
   collection: BootstrapCollection;
@@ -1975,6 +1988,7 @@ function SortableCollectionItem({
   onSelectRequest: (req: BootstrapRequest) => void;
   onRenameRequest: (id: string, name: string) => void;
   onDuplicateRequest: (req: BootstrapRequest) => void;
+  onDeleteRequest: (req: BootstrapRequest) => void;
   onRequestDragEnd: (collectionId: string, event: DragEndEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -2058,6 +2072,7 @@ function SortableCollectionItem({
                     onSelect={onSelectRequest}
                     onRename={onRenameRequest}
                     onDuplicate={onDuplicateRequest}
+                    onDelete={onDeleteRequest}
                   />
                 ))}
               </SortableContext>
@@ -4886,6 +4901,30 @@ export function DevHttpClient() {
     }
   }
 
+  async function handleDeleteRequest(request: BootstrapRequest, projectId: string) {
+    try {
+      await requestJson(`/projects/${projectId}/requests/${request.id}`, {
+        method: "DELETE",
+      });
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((p) =>
+                p.id === projectId
+                  ? { ...p, requests: p.requests.filter((r) => r.id !== request.id) }
+                  : p,
+              ),
+            }
+          : current,
+      );
+      setOpenTabs((tabs) => tabs.filter((t) => !(t.type === "request" && t.draft.id === request.id)));
+      toast.success("Request removida.");
+    } catch {
+      toast.error("Falha ao remover request.");
+    }
+  }
+
   async function handleDuplicateRequest(request: BootstrapRequest, projectId: string) {
     try {
       const newRequest = await requestJson<BootstrapRequest>(
@@ -5343,6 +5382,9 @@ export function DevHttpClient() {
                                   onDuplicateRequest={(req) =>
                                     void handleDuplicateRequest(req, project.id)
                                   }
+                                  onDeleteRequest={(req) =>
+                                    void handleDeleteRequest(req, project.id)
+                                  }
                                   onRequestDragEnd={(collId, event) =>
                                     void handleRequestDragEnd(project.id, collId, event)
                                   }
@@ -5741,11 +5783,9 @@ export function DevHttpClient() {
                           Script pos-request
                         </span>
                       </div>
-                      <Textarea
+                      <TextBodyEditor
                         value={draftRequest.postResponseScript}
-                        onChange={(event) => updateDraft("postResponseScript", event.target.value)}
-                        placeholder={`const body = response.json();\nenv.set("token", body.token);\ntest("status 200", response.status === 200);`}
-                        className="font-mono min-h-[120px]"
+                        onChange={(val) => updateDraft("postResponseScript", val)}
                       />
                     </TabsContent>
                   </Tabs>
@@ -6184,45 +6224,62 @@ function KeyValueEditor({
   environmentName?: string;
 }) {
   return (
-    <div className="grid gap-1">
+    <div className="rounded-md border border-border overflow-hidden">
       {/* Header row */}
-      <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center px-1">
-        <span className="w-4" />
-        <span className="text-xs text-muted-foreground">Chave</span>
-        <span className="text-xs text-muted-foreground">Valor</span>
-        <span className="w-6" />
+      <div className="grid grid-cols-[28px_1fr_1fr_36px] border-b border-border bg-muted/40">
+        <div className="h-7" />
+        <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium">
+          Chave
+        </div>
+        <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium border-l border-border/60">
+          Valor
+        </div>
+        <div className="h-7" />
       </div>
-      {rows.map((row) => (
-        <div key={row.id} className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center max-[720px]:grid-cols-1">
-          <Checkbox
-            checked={row.enabled}
-            onCheckedChange={(checked) => onChange(row.id, "enabled", checked === true)}
-            className="mx-auto"
-          />
-          <VariableHighlightInput
-            value={row.key}
-            onChange={(val) => onChange(row.id, "key", val)}
-            variables={variables}
-            environmentName={environmentName}
-            onUpdateVariable={onUpdateVariable}
-            placeholder="Chave"
-          />
-          <VariableHighlightInput
-            value={row.value}
-            onChange={(val) => onChange(row.id, "value", val)}
-            variables={variables}
-            environmentName={environmentName}
-            onUpdateVariable={onUpdateVariable}
-            placeholder="Valor"
-          />
-          <button
-            type="button"
-            onClick={() => onRemove(row.id)}
-            className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="Remover"
-          >
-            ×
-          </button>
+      {rows.map((row, index) => (
+        <div
+          key={row.id}
+          className={cn(
+            "grid grid-cols-[28px_1fr_1fr_36px]",
+            index < rows.length - 1 && "border-b border-border/60",
+          )}
+        >
+          <div className="flex items-center justify-center border-r border-border/60">
+            <Checkbox
+              checked={row.enabled}
+              onCheckedChange={(checked) => onChange(row.id, "enabled", checked === true)}
+            />
+          </div>
+          <div className="border-r border-border/60">
+            <VariableHighlightInput
+              value={row.key}
+              onChange={(val) => onChange(row.id, "key", val)}
+              variables={variables}
+              environmentName={environmentName}
+              onUpdateVariable={onUpdateVariable}
+              placeholder="Chave"
+            />
+          </div>
+          <div className="border-r border-border/60">
+            <VariableHighlightInput
+              value={row.value}
+              onChange={(val) => onChange(row.id, "value", val)}
+              variables={variables}
+              environmentName={environmentName}
+              onUpdateVariable={onUpdateVariable}
+              placeholder="Valor"
+            />
+          </div>
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => onRemove(row.id)}
+              className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Remover"
+            >
+              ×
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -6313,48 +6370,81 @@ function VariableEditor({
 }) {
   return (
     <div className="grid gap-2">
-      {variables.map((variable, index) => (
-        <div
-          key={index}
-          className="grid grid-cols-[1fr_1.5fr_auto] gap-2 items-center max-[720px]:grid-cols-1"
-        >
-          <Input
-            value={variable.key}
-            onChange={(event) =>
-              onChange(
-                variables.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, key: event.target.value } : item,
-                ),
-              )
-            }
-            placeholder="Variavel"
-          />
-          <Input
-            value={variable.value}
-            onChange={(event) =>
-              onChange(
-                variables.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, value: event.target.value } : item,
-                ),
-              )
-            }
-            placeholder="Valor"
-          />
-          <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground cursor-pointer select-none">
-            <Checkbox
-              checked={variable.enabled}
-              onCheckedChange={(checked) =>
-                onChange(
-                  variables.map((item, itemIndex) =>
-                    itemIndex === index ? { ...item, enabled: checked === true } : item,
-                  ),
-                )
-              }
-            />
+      <div className="rounded-md border border-border overflow-hidden">
+        {/* Header row */}
+        <div className="grid grid-cols-[28px_1fr_1.5fr_36px] border-b border-border bg-muted/40">
+          <div className="h-7 flex items-center justify-center text-xs text-muted-foreground font-medium border-r border-border/60">
             Ativo
-          </label>
+          </div>
+          <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium">
+            Variável
+          </div>
+          <div className="h-7 flex items-center px-3 text-xs text-muted-foreground font-medium border-l border-border/60">
+            Valor
+          </div>
+          <div className="h-7" />
         </div>
-      ))}
+        {variables.map((variable, index) => (
+          <div
+            key={index}
+            className={cn(
+              "grid grid-cols-[28px_1fr_1.5fr_36px]",
+              index < variables.length - 1 && "border-b border-border/60",
+            )}
+          >
+            <div className="flex items-center justify-center border-r border-border/60">
+              <Checkbox
+                checked={variable.enabled}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    variables.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, enabled: checked === true } : item,
+                    ),
+                  )
+                }
+              />
+            </div>
+            <div className="border-r border-border/60">
+              <Input
+                value={variable.key}
+                onChange={(event) =>
+                  onChange(
+                    variables.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, key: event.target.value } : item,
+                    ),
+                  )
+                }
+                placeholder="Variável"
+                className="border-0 rounded-none shadow-none focus-visible:ring-0"
+              />
+            </div>
+            <div className="border-r border-border/60">
+              <Input
+                value={variable.value}
+                onChange={(event) =>
+                  onChange(
+                    variables.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, value: event.target.value } : item,
+                    ),
+                  )
+                }
+                placeholder="Valor"
+                className="border-0 rounded-none shadow-none focus-visible:ring-0"
+              />
+            </div>
+            <div className="flex items-center justify-center">
+              <button
+                type="button"
+                onClick={() => onChange(variables.filter((_, i) => i !== index))}
+                className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                title="Remover"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
       <Button
         variant="ghost"
         size="sm"
@@ -6370,7 +6460,7 @@ function VariableEditor({
           ])
         }
       >
-        + Variavel
+        + Variável
       </Button>
     </div>
   );

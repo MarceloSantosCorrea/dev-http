@@ -6,6 +6,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { AuthResponse, RegisterPayload, User, WorkspaceMembership } from "@devhttp/shared";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -74,6 +75,7 @@ export function AuthScreen({
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDesktopRuntime, setIsDesktopRuntime] = useState(false);
+  const [saveCredentials, setSaveCredentials] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [form, setForm] = useState<RegisterPayload>({
     name: "",
@@ -91,12 +93,24 @@ export function AuthScreen({
     async function restoreSession() {
       try {
         await requestJson<SessionResponse>("/auth/me");
-        if (!cancelled) {
-          router.replace("/");
-          return;
-        }
+        if (!cancelled) { router.replace("/"); return; }
       } catch {
-        // noop
+        // Sessão inválida — tentar auto-login com credenciais salvas (somente desktop)
+        if (!cancelled && isDesktopApiClient()) {
+          const saved = await window.devHttpDesktop!.loadCredentials();
+          if (saved && !cancelled) {
+            try {
+              await requestJson<AuthResponse>("/auth/login", {
+                method: "POST",
+                body: JSON.stringify({ email: saved.email, password: saved.password }),
+              });
+              if (!cancelled) { router.replace("/"); return; }
+            } catch {
+              // Credenciais inválidas — limpar e mostrar formulário
+              await window.devHttpDesktop!.clearCredentials();
+            }
+          }
+        }
       } finally {
         if (!cancelled) {
           setIsSessionLoading(false);
@@ -133,6 +147,14 @@ export function AuthScreen({
             password: form.password,
           }),
         });
+      }
+
+      if (isDesktopApiClient()) {
+        if (saveCredentials) {
+          await window.devHttpDesktop!.saveCredentials(form.email.trim(), form.password);
+        } else {
+          await window.devHttpDesktop!.clearCredentials();
+        }
       }
 
       router.replace("/");
@@ -205,6 +227,16 @@ export function AuthScreen({
               onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
             />
           </div>
+
+          {isDesktopRuntime && mode === "login" ? (
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+              <Checkbox
+                checked={saveCredentials}
+                onCheckedChange={(checked) => setSaveCredentials(checked === true)}
+              />
+              Lembrar credenciais
+            </label>
+          ) : null}
 
           <Button type="submit" disabled={isSubmitting} size="lg" className="w-full mt-1">
             {isSubmitting

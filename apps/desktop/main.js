@@ -1,4 +1,4 @@
-const { BrowserWindow, app, ipcMain, shell } = require("electron");
+const { BrowserWindow, app, ipcMain, shell, safeStorage } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -10,16 +10,17 @@ if (process.platform === "linux") {
 }
 
 const WORKSPACE_SNAPSHOT_FILE = "workspace-snapshots.json";
+const CREDENTIALS_FILE = "saved-credentials.json";
 const TITLE_BAR_HEIGHT = 36;
 const DESKTOP_RELEASES_API_URL = "https://api.github.com/repos/MarceloSantosCorrea/dev-http/releases";
 const TITLE_BAR_THEME = {
   dark: {
-    color: "#09111e",
-    symbolColor: "#f8fafc",
+    color: "#262626",
+    symbolColor: "#A6A6A6",
   },
   light: {
-    color: "#edf4ff",
-    symbolColor: "#15253b",
+    color: "#212121",
+    symbolColor: "#A6A6A6",
   },
 };
 
@@ -173,7 +174,7 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
-    backgroundColor: "#09111e",
+    backgroundColor: "#212121",
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
     titleBarOverlay:
@@ -320,6 +321,39 @@ function endTitleBarDrag() {
   return true;
 }
 
+function getCredentialsPath() {
+  return path.join(app.getPath("userData"), CREDENTIALS_FILE);
+}
+
+function readSavedCredentials() {
+  try {
+    const filePath = getCredentialsPath();
+    if (!fs.existsSync(filePath)) return null;
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!raw.email || !raw.encryptedPassword) return null;
+    const password = safeStorage.decryptString(Buffer.from(raw.encryptedPassword, "base64"));
+    return { email: raw.email, password };
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedCredentials(email, password) {
+  const encrypted = safeStorage.encryptString(password);
+  const filePath = getCredentialsPath();
+  fs.writeFileSync(filePath, JSON.stringify({
+    email,
+    encryptedPassword: encrypted.toString("base64"),
+  }), "utf8");
+}
+
+function deleteSavedCredentials() {
+  try {
+    const filePath = getCredentialsPath();
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {}
+}
+
 function getWorkspaceSnapshotPath() {
   return path.join(app.getPath("userData"), WORKSPACE_SNAPSHOT_FILE);
 }
@@ -387,6 +421,17 @@ ipcMain.handle("devhttp:execute-local-request", async (_event, payload) => {
     }
     throw error;
   }
+});
+
+ipcMain.handle("devhttp:load-credentials", () => readSavedCredentials());
+ipcMain.handle("devhttp:save-credentials", (_e, email, password) => {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  writeSavedCredentials(email, password);
+  return true;
+});
+ipcMain.handle("devhttp:clear-credentials", () => {
+  deleteSavedCredentials();
+  return true;
 });
 
 ipcMain.handle("devhttp:get-workspace-snapshot", async (_event, userId) => {

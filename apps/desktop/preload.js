@@ -27,4 +27,7 @@ contextBridge.exposeInMainWorld("devHttpDesktop", {
   setTitleBarTheme: (theme) => ipcRenderer.invoke("devhttp:set-titlebar-theme", theme),
   checkForUpdates: () => ipcRenderer.invoke("devhttp:check-for-updates"),
   openUpdateUrl: (url) => ipcRenderer.invoke("devhttp:open-update-url", url),
+  loadCredentials: () => ipcRenderer.invoke("devhttp:load-credentials"),
+  saveCredentials: (email, password) => ipcRenderer.invoke("devhttp:save-credentials", email, password),
+  clearCredentials: () => ipcRenderer.invoke("devhttp:clear-credentials"),
 });

@@ -39,6 +39,9 @@ declare global {
       setTitleBarTheme: (theme: "light" | "dark") => Promise<boolean>;
       checkForUpdates: () => Promise<DesktopUpdateCheckResult>;
       openUpdateUrl: (url: string) => Promise<boolean>;
+      loadCredentials: () => Promise<{ email: string; password: string } | null>;
+      saveCredentials: (email: string, password: string) => Promise<boolean>;
+      clearCredentials: () => Promise<boolean>;
     };
   }
 }
