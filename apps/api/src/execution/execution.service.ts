@@ -510,11 +510,7 @@ export class ExecutionService {
 
   private buildPostRequestScriptConsole(scriptResult: NonNullable<ExecutionResponse["scriptResult"]>): ConsoleValue {
     const section: Record<string, ConsoleValue> = {
-      Logs: scriptResult.logs,
-      Tests: scriptResult.tests.map((test) => ({
-        name: test.name,
-        passed: test.passed,
-      })),
+      Logs: scriptResult.logs.map((log) => log.value),
     };
 
     if (scriptResult.error) {

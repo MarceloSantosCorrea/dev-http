@@ -76,14 +76,16 @@ function TabsTrigger({
 function TabsContent({
   value,
   className,
+  forceMount,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { value: string }) {
+}: React.HTMLAttributes<HTMLDivElement> & { value: string; forceMount?: boolean }) {
   const ctx = React.useContext(TabsContext);
-  if (ctx.value !== value) return null;
+  const isActive = ctx.value === value;
+  if (!isActive && !forceMount) return null;
   return (
     <div
       role="tabpanel"
-      className={cn("mt-3 focus-visible:outline-none", className)}
+      className={cn("mt-3 focus-visible:outline-none", !isActive && "hidden", className)}
       {...props}
     />
   );

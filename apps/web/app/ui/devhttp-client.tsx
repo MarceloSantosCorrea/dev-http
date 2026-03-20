@@ -12,7 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { Bell, ChevronDown, Copy, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
+import { closestCenter, DndContext, type DragEndEvent, type Modifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type {
@@ -63,8 +63,20 @@ import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { javascript, localCompletionSource, javascriptLanguage } from "@codemirror/lang-javascript";
 import { linter } from "@codemirror/lint";
 import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
-import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate } from "@codemirror/view";
-import { RangeSetBuilder } from "@codemirror/state";
+import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate, keymap } from "@codemirror/view";
+import { RangeSetBuilder, Prec } from "@codemirror/state";
+
+const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
+  ...transform,
+  y: 0,
+  scaleY: 1,
+});
+
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({
+  ...transform,
+  x: 0,
+  scaleX: 1,
+});
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:4000";
@@ -425,6 +437,14 @@ function varCompletionSource(variables: Variable[]) {
   };
 }
 
+const insertTabAtCursor = Prec.highest(keymap.of([{
+  key: "Tab",
+  run: (view) => {
+    view.dispatch(view.state.replaceSelection("  "));
+    return true;
+  },
+}]));
+
 function JsonBodyEditor({ value, onChange, variables = [] }: { value: string; onChange: (val: string) => void; variables?: Variable[] }) {
   const [isDark, setIsDark] = useState(false);
   useEffect(() => {
@@ -439,7 +459,7 @@ function JsonBodyEditor({ value, onChange, variables = [] }: { value: string; on
       <CodeMirror
         value={value}
         onChange={onChange}
-        extensions={[json(), linter(jsonParseLinter()), varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true })]}
+        extensions={[json(), linter(jsonParseLinter()), varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true }), insertTabAtCursor]}
         theme={isDark ? "dark" : "light"}
         basicSetup={{
           lineNumbers: true,
@@ -453,6 +473,7 @@ function JsonBodyEditor({ value, onChange, variables = [] }: { value: string; on
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
+          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
@@ -474,7 +495,7 @@ function TextBodyEditor({ value, onChange, variables = [] }: { value: string; on
       <CodeMirror
         value={value}
         onChange={onChange}
-        extensions={[varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true })]}
+        extensions={[varHighlightPlugin, autocompletion({ override: [varCompletionSource(variables)], activateOnTyping: true }), insertTabAtCursor]}
         theme={isDark ? "dark" : "light"}
         basicSetup={{
           lineNumbers: true,
@@ -488,6 +509,7 @@ function TextBodyEditor({ value, onChange, variables = [] }: { value: string; on
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
+          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
@@ -569,6 +591,7 @@ function ScriptEditor({ value, onChange }: { value: string; onChange: (val: stri
           javascriptLanguage.data.of({ autocomplete: localCompletionSource }),
           javascriptLanguage.data.of({ autocomplete: scriptContextCompletionSource }),
           autocompletion({ activateOnTyping: true }),
+          insertTabAtCursor,
         ]}
         theme={isDark ? "dark" : "light"}
         basicSetup={{
@@ -583,6 +606,7 @@ function ScriptEditor({ value, onChange }: { value: string; onChange: (val: stri
           highlightActiveLine: false,
           highlightSelectionMatches: false,
           searchKeymap: false,
+          indentWithTab: false,
         }}
         style={{ fontSize: "13px" }}
       />
@@ -1732,7 +1756,10 @@ function MethodSelect({
   useEffect(() => {
     if (!anchor) return;
     function handleClick(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      if (
+        panelRef.current && !panelRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
         setAnchor(null);
       }
     }
@@ -2175,6 +2202,7 @@ function SortableCollectionItem({
             <DndContext
               collisionDetection={closestCenter}
               onDragEnd={(event) => onRequestDragEnd(collection.id, event)}
+              modifiers={[restrictToVerticalAxis]}
             >
               <SortableContext
                 items={collectionRequests.map((r) => r.id)}
@@ -2314,34 +2342,22 @@ function SortableTab({
       <span title={fullLabel} className="max-w-[140px] truncate">
         {truncateTabLabel(fullLabel)}
       </span>
-      {tab.type === "request" && tab.hasRemoteConflict ? (
-        <span
-          className="h-2 w-2 rounded-full bg-red-500 shrink-0"
-          title="Conflito com alteração remota"
-        />
-      ) : null}
-      {tab.type === "request" && !tab.hasRemoteConflict && tab.isDirty ? (
-        <span
-          className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
-          title="Alterações não salvas"
-        />
-      ) : null}
-      {tab.type === "environment" &&
-      environmentConflictId === tab.environmentId ? (
-        <span
-          className="h-2 w-2 rounded-full bg-red-500 shrink-0"
-          title="Conflito com alteração remota"
-        />
-      ) : null}
-      {tab.type === "environment" &&
-      environmentConflictId !== tab.environmentId &&
-      isEnvironmentDirty &&
-      tab.environmentId === selectedEnvironmentId ? (
-        <span
-          className="h-2 w-2 rounded-full bg-yellow-400 shrink-0"
-          title="Alterações não salvas"
-        />
-      ) : null}
+      {(() => {
+        const isConflict =
+          (tab.type === "request" && tab.hasRemoteConflict) ||
+          (tab.type === "environment" && environmentConflictId === tab.environmentId);
+        const isDirty =
+          tab.type === "request" && !tab.hasRemoteConflict && tab.isDirty;
+        return (
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full shrink-0",
+              isConflict ? "bg-red-500" : isDirty ? "bg-yellow-400" : "invisible",
+            )}
+            title={isConflict ? "Conflito com alteração remota" : isDirty ? "Alterações não salvas" : undefined}
+          />
+        );
+      })()}
       </button>
       <button
         type="button"
@@ -2533,6 +2549,17 @@ export function DevHttpClient() {
     if (!selectedEnvironment) return false;
     return JSON.stringify(selectedEnvironment) !== savedEnvironmentSnapshot;
   }, [selectedEnvironment, savedEnvironmentSnapshot]);
+
+  const handleSaveEnvironmentRef = useRef(handleSaveEnvironment);
+  useEffect(() => {
+    handleSaveEnvironmentRef.current = handleSaveEnvironment;
+  });
+
+  useEffect(() => {
+    if (!isEnvironmentDirty) return;
+    const timer = setTimeout(() => void handleSaveEnvironmentRef.current(), 800);
+    return () => clearTimeout(timer);
+  }, [selectedEnvironment, isEnvironmentDirty]);
   const isProfileDirty = useMemo(
     () => JSON.stringify(profileForm) !== JSON.stringify(savedProfileForm) || Boolean(avatarSource),
     [avatarSource, profileForm, savedProfileForm],
@@ -3686,7 +3713,6 @@ export function DevHttpClient() {
       setSelectedEnvironmentId(saved.id);
       setSavedEnvironmentSnapshot(JSON.stringify(saved));
       setEnvironmentConflictId("");
-      toast.success("Ambiente salvo.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar ambiente.");
     } finally {
@@ -5465,6 +5491,7 @@ export function DevHttpClient() {
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleCollectionDragEnd(project.id, event)}
+                            modifiers={[restrictToVerticalAxis]}
                           >
                             <SortableContext
                               items={project.collections.map((c) => c.id)}
@@ -5537,6 +5564,7 @@ export function DevHttpClient() {
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleEnvironmentDragEnd(project.id, event)}
+                            modifiers={[restrictToVerticalAxis]}
                           >
                             <SortableContext
                               items={project.environments.map((e) => e.id)}
@@ -5631,7 +5659,7 @@ export function DevHttpClient() {
           ) : null}
 
           {openTabs.length > 0 && (
-            <DndContext collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
+            <DndContext collisionDetection={closestCenter} onDragEnd={handleTabDragEnd} modifiers={[restrictToHorizontalAxis]}>
               <SortableContext
                 items={openTabs.map((t) => t.tabId)}
                 strategy={horizontalListSortingStrategy}
@@ -5724,7 +5752,7 @@ export function DevHttpClient() {
                       value={draftRequest.method}
                       onChange={(method) => updateDraft("method", method as HttpMethod)}
                       methods={METHODS}
-                      className="w-28"
+                      className="w-28 ml-px"
                     />
                     <VariableHighlightInput
                       value={draftRequest.url}
@@ -6014,7 +6042,7 @@ export function DevHttpClient() {
                       )}
                     </TabsContent>
 
-                    <TabsContent value="console" className="mt-2 flex-1 min-h-0 overflow-y-auto">
+                    <TabsContent value="console" forceMount className="mt-2 flex-1 min-h-0 overflow-y-auto">
                       {execution ? (
                         <ExecutionConsoleViewer consoleData={execution.console} />
                       ) : (
@@ -6059,16 +6087,6 @@ export function DevHttpClient() {
                         }))
                       }
                     />
-                    {(isEnvironmentDirty || isEnvironmentSaving) ? (
-                      <Button
-                        onClick={() => void handleSaveEnvironment()}
-                        disabled={isEnvironmentSaving}
-                        size="sm"
-                        className="self-start"
-                      >
-                        {isEnvironmentSaving ? "Salvando..." : "Salvar"}
-                      </Button>
-                    ) : null}
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">
@@ -6488,6 +6506,20 @@ function VariableEditor({
   variables: Variable[];
   onChange: (variables: Variable[]) => void;
 }) {
+  const [localVars, setLocalVars] = useState<Variable[]>(variables);
+
+  useEffect(() => {
+    if (JSON.stringify(variables) !== JSON.stringify(localVars)) {
+      setLocalVars(variables);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variables]);
+
+  function handleChange(newVars: Variable[]) {
+    setLocalVars(newVars);
+    onChange(newVars);
+  }
+
   return (
     <div className="grid gap-2">
       <div className="rounded-md border border-border overflow-hidden">
@@ -6504,20 +6536,20 @@ function VariableEditor({
           </div>
           <div className="h-7" />
         </div>
-        {variables.map((variable, index) => (
+        {localVars.map((variable, index) => (
           <div
             key={index}
             className={cn(
               "grid grid-cols-[28px_1fr_1.5fr_36px]",
-              index < variables.length - 1 && "border-b border-border/60",
+              index < localVars.length - 1 && "border-b border-border/60",
             )}
           >
             <div className="flex items-center justify-center border-r border-border/60">
               <Checkbox
                 checked={variable.enabled}
                 onCheckedChange={(checked) =>
-                  onChange(
-                    variables.map((item, itemIndex) =>
+                  handleChange(
+                    localVars.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, enabled: checked === true } : item,
                     ),
                   )
@@ -6528,8 +6560,8 @@ function VariableEditor({
               <Input
                 value={variable.key}
                 onChange={(event) =>
-                  onChange(
-                    variables.map((item, itemIndex) =>
+                  handleChange(
+                    localVars.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, key: event.target.value } : item,
                     ),
                   )
@@ -6542,8 +6574,8 @@ function VariableEditor({
               <Input
                 value={variable.value}
                 onChange={(event) =>
-                  onChange(
-                    variables.map((item, itemIndex) =>
+                  handleChange(
+                    localVars.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, value: event.target.value } : item,
                     ),
                   )
@@ -6555,7 +6587,7 @@ function VariableEditor({
             <div className="flex items-center justify-center">
               <button
                 type="button"
-                onClick={() => onChange(variables.filter((_, i) => i !== index))}
+                onClick={() => handleChange(localVars.filter((_, i) => i !== index))}
                 className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                 title="Remover"
               >
@@ -6570,8 +6602,8 @@ function VariableEditor({
         size="sm"
         className="w-full justify-start text-muted-foreground hover:text-foreground"
         onClick={() =>
-          onChange([
-            ...variables,
+          handleChange([
+            ...localVars,
             {
               key: "",
               value: "",
@@ -7515,7 +7547,7 @@ function ExecutionConsoleViewer({ consoleData }: { consoleData: ExecutionConsole
 
       <div className="grid gap-0 rounded-lg border border-border/40 bg-muted/40 py-2 font-mono text-xs overflow-hidden">
         {Object.entries(consoleData.sections).map(([label, value]) => (
-          <ConsoleNode key={label} label={label} value={value} depth={0} defaultExpanded />
+          <ConsoleNode key={label} label={label} value={value} depth={0} />
         ))}
       </div>
     </div>
