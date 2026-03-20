@@ -11,6 +11,7 @@ if (process.platform === "linux") {
 
 const WORKSPACE_SNAPSHOT_FILE = "workspace-snapshots.json";
 const CREDENTIALS_FILE = "saved-credentials.json";
+const TITLEBAR_THEME_FILE = "titlebar-theme.json";
 const TITLE_BAR_HEIGHT = 36;
 const DESKTOP_RELEASES_API_URL = "https://api.github.com/repos/MarceloSantosCorrea/dev-http/releases";
 const TITLE_BAR_THEME = {
@@ -181,7 +182,7 @@ function createWindow() {
       process.platform === "darwin"
         ? false
         : {
-            ...TITLE_BAR_THEME.dark,
+            ...TITLE_BAR_THEME[readSavedTitleBarTheme()],
             height: TITLE_BAR_HEIGHT,
           },
     webPreferences: {
@@ -239,6 +240,7 @@ function setTitleBarTheme(theme) {
     ...TITLE_BAR_THEME[resolvedTheme],
     height: TITLE_BAR_HEIGHT,
   });
+  writeSavedTitleBarTheme(resolvedTheme);
   return true;
 }
 
@@ -354,6 +356,26 @@ function deleteSavedCredentials() {
   } catch {}
 }
 
+function readSavedTitleBarTheme() {
+  try {
+    const filePath = path.join(app.getPath("userData"), TITLEBAR_THEME_FILE);
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed.theme === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+function writeSavedTitleBarTheme(theme) {
+  try {
+    const filePath = path.join(app.getPath("userData"), TITLEBAR_THEME_FILE);
+    fs.writeFileSync(filePath, JSON.stringify({ theme }), "utf-8");
+  } catch {
+    // noop
+  }
+}
+
 function getWorkspaceSnapshotPath() {
   return path.join(app.getPath("userData"), WORKSPACE_SNAPSHOT_FILE);
 }
@@ -385,6 +407,7 @@ ipcMain.handle("devhttp:window-maximize", () => {
 });
 ipcMain.handle("devhttp:window-close", () => mainWindow?.close());
 ipcMain.handle("devhttp:get-platform", () => process.platform);
+ipcMain.handle("devhttp:app-version", () => app.getVersion());
 ipcMain.handle("devhttp:window-begin-titlebar-drag", (_event, payload) => {
   return beginTitleBarDrag(payload);
 });
