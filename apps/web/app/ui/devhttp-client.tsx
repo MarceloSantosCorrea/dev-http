@@ -1494,15 +1494,16 @@ function VariableHighlightInput({
         onMouseMove={handleMouseMove}
         onMouseLeave={() => scheduleClose()}
         onBlur={() => setSuggestions(null)}
-        onMouseDown={(e) => {
+        onMouseUp={(e) => {
           const el = ref.current;
           if (!el) return;
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed) return;
           const range = document.createRange();
           range.selectNodeContents(el);
           const rects = range.getClientRects();
           const lastRect = rects[rects.length - 1];
           if (!lastRect || e.clientX > lastRect.right) {
-            e.preventDefault();
             el.focus();
             setCaretOffset(el, el.textContent?.length ?? 0);
           }
@@ -1511,7 +1512,7 @@ function VariableHighlightInput({
           "var-input h-[34px] w-full rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] px-2.5 text-[var(--text-pri)]",
           "text-sm outline-none",
           "focus-visible:border-[var(--focus-ring)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-alpha)]",
-          "whitespace-nowrap overflow-x-auto",
+          "whitespace-nowrap overflow-x-auto overflow-y-hidden",
           "py-[7px]",
           disabled && "opacity-50 pointer-events-none cursor-not-allowed",
           className,
