@@ -234,6 +234,10 @@ html.dark .method-pill.options { color: #EB79B7; }
   pointer-events: none;
 }
 
+/* Ocultar scrollbar do input de URL mantendo scroll funcional */
+.var-input::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+.var-input { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+
 /* Hidden file input inside upload label */
 .upload-button input {
   display: none;

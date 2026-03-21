@@ -1348,6 +1348,8 @@ function VariableHighlightInput({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoStack = useRef<string[]>([]);
+  const redoStack = useRef<string[]>([]);
   const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
   const [suggestions, setSuggestions] = useState<{
     items: Variable[];
@@ -1384,6 +1386,9 @@ function VariableHighlightInput({
     if (!el) return;
     const caret = getCaretOffset(el);
     const text = el.textContent ?? "";
+    undoStack.current.push(value);
+    if (undoStack.current.length > 100) undoStack.current.shift();
+    redoStack.current = [];
     onChange(text);
     el.innerHTML = buildHighlightHTML(text, variables);
     setCaretOffset(el, caret);
@@ -1427,6 +1432,36 @@ function VariableHighlightInput({
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter") e.preventDefault();
+
+    const el = ref.current;
+
+    // Undo: Ctrl+Z
+    if (e.ctrlKey && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      e.preventDefault();
+      if (!el) return;
+      const prev = undoStack.current.pop();
+      if (prev !== undefined) {
+        redoStack.current.push(el.textContent ?? "");
+        onChange(prev);
+        el.innerHTML = buildHighlightHTML(prev, variables);
+        setCaretOffset(el, prev.length);
+      }
+      return;
+    }
+
+    // Redo: Ctrl+Shift+Z
+    if (e.ctrlKey && e.key.toLowerCase() === "z" && e.shiftKey) {
+      e.preventDefault();
+      if (!el) return;
+      const next = redoStack.current.pop();
+      if (next !== undefined) {
+        undoStack.current.push(el.textContent ?? "");
+        onChange(next);
+        el.innerHTML = buildHighlightHTML(next, variables);
+        setCaretOffset(el, next.length);
+      }
+      return;
+    }
 
     if (suggestions) {
       if (e.key === "ArrowDown") {
