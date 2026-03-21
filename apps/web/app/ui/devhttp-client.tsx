@@ -2489,7 +2489,7 @@ export function DevHttpClient() {
     "headers",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isProjectMinimized, setIsProjectMinimized] = useState(false);
+  const [sidebarExpandedProjectId, setSidebarExpandedProjectId] = useState("");
   const [collectionsCollapsed, setCollectionsCollapsed] = useState(false);
   const [environmentsCollapsed, setEnvironmentsCollapsed] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
@@ -2525,6 +2525,8 @@ export function DevHttpClient() {
   const [isEnvironmentSaving, setIsEnvironmentSaving] = useState(false);
   const [isEditingEnvName, setIsEditingEnvName] = useState(false);
   const [envNameDraft, setEnvNameDraft] = useState("");
+  const [isEditingRequestName, setIsEditingRequestName] = useState(false);
+  const [requestNameDraft, setRequestNameDraft] = useState("");
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [savedThemeMode, setSavedThemeMode] = useState<ThemeMode>("system");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -2976,6 +2978,7 @@ export function DevHttpClient() {
 
         skipNextProjectResetRef.current = true;
         setSelectedProjectId(nextUiState.selectedProjectId);
+        setSidebarExpandedProjectId(nextUiState.selectedProjectId);
         setSelectedCollectionId(nextUiState.selectedCollectionId);
         setSelectedEnvironmentId(nextUiState.selectedEnvironmentId);
         setExpandedCollectionIds(nextUiState.expandedCollectionIds);
@@ -3169,6 +3172,7 @@ export function DevHttpClient() {
 
   useEffect(() => {
     if (!selectedProject) return;
+    if (openTabs.length > 0) return;
     if (skipNextProjectResetRef.current) {
       skipNextProjectResetRef.current = false;
       return;
@@ -3180,6 +3184,23 @@ export function DevHttpClient() {
     setOpenTabs(tabs);
     setActiveTabId(tabs[0]?.tabId ?? "");
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!bootstrap || !activeEditorTab) return;
+    if (activeEditorTab.type === "request") {
+      const pid = activeEditorTab.draft.projectId;
+      if (pid) setSelectedProjectId(pid);
+    } else if (activeEditorTab.type === "environment") {
+      const project = bootstrap.projects.find((p) =>
+        p.environments.some((e) => e.id === activeEditorTab.environmentId),
+      );
+      if (project) setSelectedProjectId(project.id);
+    }
+  }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setIsEditingRequestName(false);
+  }, [activeTabId]);
 
   useEffect(() => {
     if (!auth || !bootstrap || !desktopSnapshotReadyRef.current) {
@@ -4801,6 +4822,47 @@ export function DevHttpClient() {
     }
   }
 
+  async function saveRequestNameInline(requestId: string, projectId: string, newName: string) {
+    if (!auth) return;
+    try {
+      const updated = await requestJson<BootstrapRequest>(
+        `/projects/${projectId}/requests/${requestId}`,
+        {
+          method: "PATCH",
+          headers: authHeaders(auth.token),
+          body: JSON.stringify({ name: newName }),
+        },
+      );
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((project) =>
+                project.id === projectId
+                  ? {
+                      ...project,
+                      requests: project.requests.map((r) =>
+                        r.id === updated.id ? { ...r, name: updated.name } : r,
+                      ),
+                    }
+                  : project,
+              ),
+            }
+          : current,
+      );
+      setOpenTabs((current) =>
+        current.map((tab) => {
+          if (tab.type !== "request" || tab.draft.id !== updated.id) return tab;
+          const draft = { ...tab.draft, name: updated.name };
+          const savedSnapshot = updateSerializedRequestSnapshotName(tab.savedSnapshot, updated.name);
+          return { ...tab, draft, savedSnapshot, isDirty: serializeRequestSnapshot(draft) !== savedSnapshot };
+        }),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao renomear request.");
+    }
+  }
+
   function updateRequestTabDraft(
     tabId: string,
     updater: (draft: BootstrapRequest) => BootstrapRequest,
@@ -4932,10 +4994,17 @@ export function DevHttpClient() {
         current.includes(request.collectionId!) ? current : [...current, request.collectionId!],
       );
     }
+    if (request.projectId) {
+      setSidebarExpandedProjectId(request.projectId);
+    }
     setCollectionMenu(null);
   }
 
   function selectEnvironment(environmentId: string) {
+    const ownerProject = bootstrap?.projects.find((p) =>
+      p.environments.some((e) => e.id === environmentId),
+    );
+    if (ownerProject) setSidebarExpandedProjectId(ownerProject.id);
     const tabId = `env-${environmentId}`;
     setOpenTabs((prev) => {
       if (prev.some((t) => t.tabId === tabId)) return prev;
@@ -5565,25 +5634,20 @@ export function DevHttpClient() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (project.id === selectedProjectId) {
-                          setIsProjectMinimized((prev) => !prev);
-                        } else {
-                          selectProject(project.id);
-                          setIsProjectMinimized(false);
-                        }
+                        setSidebarExpandedProjectId((prev) =>
+                          prev === project.id ? "" : project.id,
+                        );
                       }}
                       className="flex-1 text-left min-w-0"
                     >
                       <div className="flex items-center gap-1">
                         <strong className="block text-sm font-medium truncate">{project.name}</strong>
-                        {isActiveProject ? (
-                          <ChevronDown
-                            className={cn(
-                              "h-3.5 w-3.5 transition-transform shrink-0 text-muted-foreground",
-                              isProjectMinimized && "-rotate-90",
-                            )}
-                          />
-                        ) : null}
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 transition-transform shrink-0 text-muted-foreground",
+                            sidebarExpandedProjectId !== project.id && "-rotate-90",
+                          )}
+                        />
                       </div>
                       {project.description ? (
                         <span className="text-xs text-muted-foreground truncate">{project.description}</span>
@@ -5610,7 +5674,7 @@ export function DevHttpClient() {
                     </button>
                   </div>
 
-                  {isActiveProject && !isProjectMinimized ? (
+                  {sidebarExpandedProjectId === project.id ? (
                     <div className="border-t border-[var(--bd-def)] px-3 py-2 grid gap-3">
                       <div className="grid gap-0.5">
                         <div
@@ -5861,6 +5925,44 @@ export function DevHttpClient() {
               }
             >
               <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-hidden lg:h-full pt-3">
+                  {activeEditorTab?.type === "request" && (
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground shrink-0 px-px">
+                      <span className="truncate max-w-[140px]">{selectedProject?.name ?? "Projeto"}</span>
+                      <span className="opacity-40">/</span>
+                      {isEditingRequestName ? (
+                        <input
+                          autoFocus
+                          className="font-medium text-foreground bg-transparent border-b border-primary outline-none min-w-0 flex-1"
+                          value={requestNameDraft}
+                          onChange={(e) => setRequestNameDraft(e.target.value)}
+                          onBlur={() => {
+                            const trimmed = requestNameDraft.trim();
+                            if (trimmed && activeEditorTab) {
+                              void saveRequestNameInline(activeEditorTab.draft.id, activeEditorTab.draft.projectId, trimmed);
+                            }
+                            setIsEditingRequestName(false);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setIsEditingRequestName(false);
+                          }}
+                        />
+                      ) : (
+                        <span
+                          className="font-medium text-foreground cursor-text hover:opacity-70 transition-opacity border-b border-transparent truncate"
+                          onClick={() => {
+                            if (activeEditorTab?.type === "request") {
+                              setRequestNameDraft(activeEditorTab.draft.name);
+                              setIsEditingRequestName(true);
+                            }
+                          }}
+                          title="Clique para renomear"
+                        >
+                          {activeEditorTab.draft.name}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex gap-2 max-[720px]:grid max-[720px]:grid-cols-1 shrink-0">
                     <MethodSelect
                       value={draftRequest.method}
@@ -6183,38 +6285,42 @@ export function DevHttpClient() {
                   <p className="text-[0.65rem] uppercase tracking-widest text-primary font-semibold mb-1">
                     Variaveis de ambiente
                   </p>
-                  {isEditingEnvName ? (
-                    <input
-                      autoFocus
-                      className="text-lg font-semibold bg-transparent border-b border-primary outline-none w-full"
-                      value={envNameDraft}
-                      onChange={(e) => setEnvNameDraft(e.target.value)}
-                      onBlur={() => {
-                        const trimmed = envNameDraft.trim();
-                        if (trimmed && editedEnvironment) {
-                          updateEditedEnvironmentState((env) => ({ ...env, name: trimmed }));
-                        }
-                        setIsEditingEnvName(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                        if (e.key === "Escape") setIsEditingEnvName(false);
-                      }}
-                    />
-                  ) : (
-                    <h3
-                      className="text-lg font-semibold cursor-text hover:opacity-70 transition-opacity border-b border-transparent"
-                      onClick={() => {
-                        if (editedEnvironment) {
-                          setEnvNameDraft(editedEnvironment.name);
-                          setIsEditingEnvName(true);
-                        }
-                      }}
-                      title="Clique para renomear"
-                    >
-                      {editedEnvironment?.name ?? "Selecione um ambiente"}
-                    </h3>
-                  )}
+                  <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <span className="truncate max-w-[140px]">{selectedProject?.name ?? "Projeto"}</span>
+                    <span className="opacity-40">/</span>
+                    {isEditingEnvName ? (
+                      <input
+                        autoFocus
+                        className="text-lg font-semibold text-foreground bg-transparent border-b border-primary outline-none min-w-0 flex-1"
+                        value={envNameDraft}
+                        onChange={(e) => setEnvNameDraft(e.target.value)}
+                        onBlur={() => {
+                          const trimmed = envNameDraft.trim();
+                          if (trimmed && editedEnvironment) {
+                            updateEditedEnvironmentState((env) => ({ ...env, name: trimmed }));
+                          }
+                          setIsEditingEnvName(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setIsEditingEnvName(false);
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="text-lg font-semibold text-foreground cursor-text hover:opacity-70 transition-opacity border-b border-transparent"
+                        onClick={() => {
+                          if (editedEnvironment) {
+                            setEnvNameDraft(editedEnvironment.name);
+                            setIsEditingEnvName(true);
+                          }
+                        }}
+                        title="Clique para renomear"
+                      >
+                        {editedEnvironment?.name ?? "Selecione um ambiente"}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {editedEnvironment ? (
