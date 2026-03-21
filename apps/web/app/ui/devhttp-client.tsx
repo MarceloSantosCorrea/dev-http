@@ -2523,6 +2523,8 @@ export function DevHttpClient() {
   const [savedEnvironmentSnapshot, setSavedEnvironmentSnapshot] = useState("");
   const [environmentConflictId, setEnvironmentConflictId] = useState("");
   const [isEnvironmentSaving, setIsEnvironmentSaving] = useState(false);
+  const [isEditingEnvName, setIsEditingEnvName] = useState(false);
+  const [envNameDraft, setEnvNameDraft] = useState("");
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [savedThemeMode, setSavedThemeMode] = useState<ThemeMode>("system");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -2680,6 +2682,10 @@ export function DevHttpClient() {
       editedEnvironment ? JSON.stringify(editedEnvironment) : "",
     );
   }, [editedEnvironment?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setIsEditingEnvName(false);
+  }, [editedEnvironment?.id]);
 
   const draftRequest: BootstrapRequest =
     activeEditorTab?.type === "request"
@@ -6177,23 +6183,42 @@ export function DevHttpClient() {
                   <p className="text-[0.65rem] uppercase tracking-widest text-primary font-semibold mb-1">
                     Variaveis de ambiente
                   </p>
-                  <h3 className="text-lg font-semibold">
-                    {editedEnvironment?.name ?? "Selecione um ambiente"}
-                  </h3>
+                  {isEditingEnvName ? (
+                    <input
+                      autoFocus
+                      className="text-lg font-semibold bg-transparent border-b border-primary outline-none w-full"
+                      value={envNameDraft}
+                      onChange={(e) => setEnvNameDraft(e.target.value)}
+                      onBlur={() => {
+                        const trimmed = envNameDraft.trim();
+                        if (trimmed && editedEnvironment) {
+                          updateEditedEnvironmentState((env) => ({ ...env, name: trimmed }));
+                        }
+                        setIsEditingEnvName(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") setIsEditingEnvName(false);
+                      }}
+                    />
+                  ) : (
+                    <h3
+                      className="text-lg font-semibold cursor-text hover:opacity-70 transition-opacity border-b border-transparent"
+                      onClick={() => {
+                        if (editedEnvironment) {
+                          setEnvNameDraft(editedEnvironment.name);
+                          setIsEditingEnvName(true);
+                        }
+                      }}
+                      title="Clique para renomear"
+                    >
+                      {editedEnvironment?.name ?? "Selecione um ambiente"}
+                    </h3>
+                  )}
                 </div>
 
                 {editedEnvironment ? (
                   <>
-                    <Input
-                      value={editedEnvironment.name}
-                      onChange={(event) =>
-                        updateEditedEnvironmentState((environment) => ({
-                          ...environment,
-                          name: event.target.value,
-                        }))
-                      }
-                      placeholder="Nome do ambiente"
-                    />
                     <VariableEditor
                       key={editedEnvironment.id}
                       variables={editedEnvironment.variables}
