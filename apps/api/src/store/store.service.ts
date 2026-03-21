@@ -209,7 +209,7 @@ export class StoreService {
     const where: Prisma.MembershipWhereInput = {
       userId,
       ...(opts.search
-        ? { workspace: { name: { contains: opts.search, mode: "insensitive" } } }
+        ? { workspace: { name: { contains: opts.search } } }
         : {}),
     };
     const [total, memberships] = await Promise.all([
