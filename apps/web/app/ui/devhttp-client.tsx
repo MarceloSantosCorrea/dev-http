@@ -10,7 +10,7 @@ import {
   useTransition,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bell, ChevronDown, Copy, GripVertical, Pencil, Trash2 } from "lucide-react";
+import { Bell, ChevronDown, Copy, GripVertical, LayoutGrid, Lock, MoreVertical, PanelLeft, PanelLeftClose, Pencil, Trash2, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { closestCenter, DndContext, type DragEndEvent, type Modifier } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -1824,14 +1824,18 @@ function WorkspaceSelect({
   workspaceId,
   workspaces,
   onChange,
+  onCreateWorkspace,
   className,
 }: {
   workspaceId: string;
   workspaces: WorkspaceMembership[];
   onChange: (id: string) => void;
+  onCreateWorkspace: () => void;
   className?: string;
 }) {
+  const router = useRouter();
   const [anchor, setAnchor] = useState<{ x: number; y: number; width: number } | null>(null);
+  const [search, setSearch] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -1848,17 +1852,23 @@ function WorkspaceSelect({
 
   const selected = workspaces.find((m) => m.workspace.id === workspaceId);
 
+  const filtered = workspaces.filter(({ workspace }) =>
+    workspace.name.toLowerCase().includes(search.toLowerCase()),
+  ).slice(0, 10);
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
         className={cn(
-          "h-[34px] flex items-center gap-1.5 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] pl-2.5 pr-2 text-sm text-[var(--text-pri)] transition-colors focus:outline-none focus:ring-2 focus:border-[var(--focus-ring)] hover:bg-[var(--bg-secondary)] flex-1",
+          "h-[34px] flex items-center gap-1.5 rounded bg-transparent pl-2.5 pr-2 text-sm text-[var(--text-pri)] transition-colors focus:outline-none focus:ring-2 hover:bg-[var(--bg-secondary)] flex-1",
           className,
         )}
-        onClick={() => {
+        onMouseDown={(e) => {
+          e.stopPropagation();
           if (anchor) { setAnchor(null); return; }
+          setSearch("");
           const rect = triggerRef.current!.getBoundingClientRect();
           setAnchor({ x: rect.left, y: rect.bottom + 4, width: rect.width });
         }}
@@ -1870,18 +1880,50 @@ function WorkspaceSelect({
         <div
           ref={panelRef}
           style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
-          className="rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
+          className="rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] shadow-xl overflow-hidden"
         >
-          {workspaces.map(({ workspace }) => (
+          <div className="flex items-center gap-1 px-2 pt-2 pb-1">
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search workspaces..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 rounded border border-[var(--bd-str)] bg-[var(--bg-secondary)] px-2 py-1 text-xs text-[var(--text-pri)] placeholder:text-[var(--text-sec)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+            />
             <button
-              key={workspace.id}
               type="button"
-              className="w-full rounded px-3 py-1.5 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)] transition-colors"
-              onClick={() => { onChange(workspace.id); setAnchor(null); }}
+              className="shrink-0 rounded px-2 py-1 text-xs font-medium text-[var(--brand)] hover:bg-[var(--bg-secondary)] transition-colors"
+              onClick={() => { setAnchor(null); onCreateWorkspace(); }}
             >
-              {workspace.name}
+              Create
             </button>
-          ))}
+          </div>
+          <div className="p-1">
+            {filtered.map(({ workspace, role }) => (
+              <button
+                key={workspace.id}
+                type="button"
+                className="w-full flex items-center gap-2 rounded px-3 py-1.5 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)] transition-colors"
+                onClick={() => { onChange(workspace.id); setAnchor(null); }}
+              >
+                {role === "owner"
+                  ? <Lock className="size-3.5 shrink-0 opacity-60" />
+                  : <Users className="size-3.5 shrink-0 opacity-60" />}
+                <span className="flex-1 truncate">{workspace.name}</span>
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-[var(--bd-str)] p-1">
+            <button
+              type="button"
+              className="w-full flex items-center gap-2 rounded px-3 py-1.5 text-left text-xs text-[var(--text-sec)] hover:bg-[var(--bg-secondary)] transition-colors"
+              onClick={() => { setAnchor(null); router.push("/workspaces"); }}
+            >
+              <LayoutGrid className="size-3.5 shrink-0" />
+              View all workspaces
+            </button>
+          </div>
         </div>,
         document.body,
       )}
@@ -1931,7 +1973,7 @@ function EnvironmentSelect({
         onClick={() => {
           if (anchor) { setAnchor(null); return; }
           const rect = triggerRef.current!.getBoundingClientRect();
-          setAnchor({ x: rect.left, y: rect.bottom + 4, width: rect.width });
+          setAnchor({ x: rect.right, y: rect.bottom + 4, width: rect.width });
         }}
       >
         <span className="flex-1 text-left truncate">{label}</span>
@@ -1940,7 +1982,7 @@ function EnvironmentSelect({
       {anchor && createPortal(
         <div
           ref={panelRef}
-          style={{ position: "fixed", left: anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
+          style={{ position: "fixed", right: window.innerWidth - anchor.x, top: anchor.y, minWidth: anchor.width, zIndex: 9999 }}
           className="rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
         >
           <button
@@ -1997,7 +2039,7 @@ function applyTheme(themeMode: ThemeMode) {
 }
 
 function isDesktopTitleBarInteractiveTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest("[data-titlebar-no-drag='true']"));
+  return target instanceof Element && Boolean(target.closest("[data-titlebar-no-drag='true']"));
 }
 
 function emptyProfileForm(user?: User | null): ProfileFormState {
@@ -2421,8 +2463,12 @@ export function DevHttpClient() {
   const [deleteProjectConfirmation, setDeleteProjectConfirmation] = useState("");
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [openProjectMenuId, setOpenProjectMenuId] = useState<string | null>(null);
+  const [projectMenuAnchor, setProjectMenuAnchor] = useState<{ top: number; left: number } | null>(null);
+  const importTargetProjectIdRef = useRef<string | null>(null);
   const [expandedCollectionIds, setExpandedCollectionIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectMenuFileInputRef = useRef<HTMLInputElement | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isDesktopEditorLayout, setIsDesktopEditorLayout] = useState(false);
   const isResizingRef = useRef(false);
@@ -2747,6 +2793,18 @@ export function DevHttpClient() {
       void window.devHttpDesktop?.endTitleBarDrag();
     };
   }, []);
+
+  useEffect(() => {
+    if (!openProjectMenuId) return;
+    function handler(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (target.closest("[data-project-menu-btn]") || target.closest("[data-project-menu-portal]")) return;
+      setOpenProjectMenuId(null);
+      setProjectMenuAnchor(null);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [openProjectMenuId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3554,9 +3612,12 @@ export function DevHttpClient() {
     }
   }
 
-  async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImport(event: React.ChangeEvent<HTMLInputElement>, overrideProjectId?: string) {
     const files = Array.from(event.target.files ?? []);
-    if (files.length === 0 || !auth || !selectedProject) {
+    const effectiveProject = overrideProjectId
+      ? (bootstrap?.projects.find((p) => p.id === overrideProjectId) ?? selectedProject)
+      : selectedProject;
+    if (files.length === 0 || !auth || !effectiveProject) {
       return;
     }
 
@@ -3590,13 +3651,13 @@ export function DevHttpClient() {
         throw new Error("Nenhum arquivo Postman válido foi selecionado.");
       }
 
-      const result = await requestJson<PostmanImportResult>(`/projects/${selectedProject.id}/import/postman`, {
+      const result = await requestJson<PostmanImportResult>(`/projects/${effectiveProject.id}/import/postman`, {
         method: "POST",
         headers: authHeaders(auth.token),
         body: JSON.stringify({ collection, environment }),
       });
       const refreshed = normalizeProject(
-        await requestJson<BootstrapProject>(`/projects/${selectedProject.id}`, {
+        await requestJson<BootstrapProject>(`/projects/${effectiveProject.id}`, {
           headers: authHeaders(auth.token),
         }),
       );
@@ -3605,7 +3666,7 @@ export function DevHttpClient() {
           ? {
               ...current,
               projects: current.projects.map((project) =>
-                project.id === selectedProject.id ? refreshed : project,
+                project.id === effectiveProject.id ? refreshed : project,
               ),
             }
           : current,
@@ -5282,36 +5343,58 @@ export function DevHttpClient() {
         >
           {/* LEFT: WorkspaceSelect */}
           <div
-            className="flex items-center px-3"
+            className="flex items-center px-3 desktop-titlebar-no-drag gap-1"
             style={desktopPlatform === "darwin" ? { paddingLeft: 76 } : undefined}
             data-titlebar-no-drag="true"
           >
+            <button
+              onClick={handleToggleSidebar}
+              className="flex items-center justify-center w-7 h-7 rounded hover:bg-[var(--bg-secondary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors"
+              title={sidebarCollapsed ? "Expandir sidebar" : "Recolher sidebar"}
+              type="button"
+            >
+              {sidebarCollapsed
+                ? <PanelLeft className="size-4" />
+                : <PanelLeftClose className="size-4" />}
+            </button>
+
             <WorkspaceSelect
               workspaceId={auth.workspaceId}
               workspaces={auth.workspaces}
               onChange={handleWorkspaceChange}
+              onCreateWorkspace={() => { setCreateName(""); setCreateModalType("workspace"); }}
             />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 text-xs"
+              onClick={() => openCreateModal("project")}
+            >
+              Novo Projeto
+            </Button>
           </div>
 
           {/* CENTER: Search */}
-          <div className="flex-1 flex justify-center px-4" data-titlebar-no-drag="true">
-            <Input
-              value={projectSearch}
-              onChange={(event) => setProjectSearch(event.target.value)}
-              placeholder="Pesquisar projeto"
-              className="h-[26px] max-w-sm text-xs"
-            />
+          <div className="flex-1 flex justify-center px-4">
+            <div className="desktop-titlebar-no-drag" data-titlebar-no-drag="true">
+              <Input
+                value={projectSearch}
+                onChange={(event) => setProjectSearch(event.target.value)}
+                placeholder="Pesquisar projeto"
+                className="h-[26px] max-w-sm text-xs"
+              />
+            </div>
           </div>
 
           {/* RIGHT: Notifications + UserAvatar */}
           <div
-            className="flex items-center gap-1 px-3"
+            className="flex items-center gap-1 px-3 desktop-titlebar-no-drag"
             style={usesNativeWindowControls ? { paddingRight: 138 } : undefined}
             data-titlebar-no-drag="true"
           >
             <div ref={notificationsRef}>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
                 className="h-7 w-7 shrink-0"
                 onClick={() => {
@@ -5319,7 +5402,7 @@ export function DevHttpClient() {
                     setNotificationsAnchor(null);
                   } else if (notificationsRef.current) {
                     const rect = notificationsRef.current.getBoundingClientRect();
-                    setNotificationsAnchor({ x: rect.left, y: rect.bottom + 4 });
+                    setNotificationsAnchor({ x: rect.right - 320, y: rect.bottom + 4 });
                   }
                 }}
                 title="Notificações"
@@ -5333,7 +5416,7 @@ export function DevHttpClient() {
             <div ref={userMenuRef} className="relative">
               <button
                 type="button"
-                className="flex items-center justify-center w-7 h-7 rounded border border-[var(--bd-def)] bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] transition-colors overflow-hidden"
+                className="flex items-center justify-center w-7 h-7 rounded-full border border-[var(--bd-def)] bg-transparent hover:bg-[var(--bg-secondary)] transition-colors overflow-hidden"
                 onClick={() => setIsUserMenuOpen((current) => !current)}
                 title={bootstrap.user.name}
               >
@@ -5410,83 +5493,18 @@ export function DevHttpClient() {
           )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto pl-0.5 pr-1 grid gap-3 content-start">
-            <div className="flex items-center justify-end">
-              <button
-                onClick={handleToggleSidebar}
-                className="flex items-center justify-center w-6 h-6 rounded border border-[var(--bd-def)] hover:bg-[var(--bg-tertiary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors"
-                title="Recolher sidebar"
-                type="button"
-              >
-                ←
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div ref={newMenuRef}>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => {
-                    if (newMenuAnchor) {
-                      setNewMenuAnchor(null);
-                    } else if (newMenuRef.current) {
-                      const rect = newMenuRef.current.getBoundingClientRect();
-                      setNewMenuAnchor({ x: rect.left, y: rect.bottom + 4 });
-                    }
-                  }}
-                  title="Novo"
-                >
-                  +
-                </Button>
-              </div>
-              <div className="relative">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => setIsMenuOpen((current) => !current)}
-                  title="Acoes do projeto"
-                  disabled={!selectedProject}
-                >
-                  ...
-                </Button>
-                {isMenuOpen ? (
-                  <div className="absolute right-0 top-10 z-20 min-w-44 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl">
-                    <button
-                      type="button"
-                      className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      Importar
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-                      onClick={() => void handleExport()}
-                    >
-                      Exportar
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="application/json"
-                      multiple
-                      className="hidden"
-                      onChange={handleImport}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <EnvironmentSelect
-              value={selectedEnvironmentId}
-              environments={selectedProject?.environments ?? []}
-              onChange={setSelectedEnvironmentId}
-              disabled={!selectedProject}
+            <input
+              ref={projectMenuFileInputRef}
+              type="file"
+              accept="application/json"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const projectId = importTargetProjectIdRef.current ?? undefined;
+                importTargetProjectIdRef.current = null;
+                void handleImport(event, projectId);
+              }}
             />
-
             <div className="grid gap-2">
             {filteredProjects.map((project) => {
               const isActiveProject = project.id === selectedProjectId;
@@ -5499,7 +5517,7 @@ export function DevHttpClient() {
                     isActiveProject ? "border-[var(--brand)]/40 bg-[var(--bg-tertiary)]" : "border-[var(--bd-def)]",
                   )}
                 >
-                  <div className="flex items-start gap-2 px-3 py-2">
+                  <div className="flex items-center gap-2 px-3 py-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -5527,29 +5545,24 @@ export function DevHttpClient() {
                         <span className="text-xs text-muted-foreground truncate">{project.description}</span>
                       ) : null}
                     </button>
-                    {canRenameProjectEntities ? (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openRenameModal("project", project.id, project.name, project.id);
-                        }}
-                        className="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md border border-transparent text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground transition-colors shrink-0"
-                        title="Renomear projeto"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
                     <button
                       type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openDeleteProjectModal(project);
+                      data-project-menu-btn={project.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (openProjectMenuId === project.id) {
+                          setOpenProjectMenuId(null);
+                          setProjectMenuAnchor(null);
+                        } else {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setProjectMenuAnchor({ top: rect.top, left: rect.right + 4 });
+                          setOpenProjectMenuId(project.id);
+                        }
                       }}
-                      className="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md border border-transparent text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
-                      title="Remover projeto"
+                      className="flex items-center justify-center w-6 h-6 rounded-md border border-transparent text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground transition-colors shrink-0"
+                      title="Ações do projeto"
                     >
-                      x
+                      <MoreVertical className="h-3.5 w-3.5" />
                     </button>
                   </div>
 
@@ -5693,19 +5706,6 @@ export function DevHttpClient() {
         </aside>
 
         <section className="p-3 flex flex-col gap-2 min-h-0 overflow-hidden">
-          {sidebarCollapsed ? (
-            <div className="shrink-0">
-              <button
-                onClick={handleToggleSidebar}
-                className="flex items-center justify-center w-6 h-6 rounded border border-[var(--bd-def)] hover:bg-[var(--bg-tertiary)] text-[var(--text-sec)] hover:text-[var(--text-pri)] transition-colors shrink-0"
-                title="Expandir sidebar"
-                type="button"
-              >
-                →
-              </button>
-            </div>
-          ) : null}
-
           {openTabs.length > 0 && (
             <DndContext collisionDetection={closestCenter} onDragEnd={handleTabDragEnd} modifiers={[restrictToHorizontalAxis]}>
               <SortableContext
@@ -5828,6 +5828,14 @@ export function DevHttpClient() {
                       placeholder="https://api.exemplo.com/resource"
                       className="flex-1 font-mono"
                     />
+                    <div className="w-36 shrink-0">
+                      <EnvironmentSelect
+                        value={selectedEnvironmentId}
+                        environments={selectedProject?.environments ?? []}
+                        onChange={setSelectedEnvironmentId}
+                        disabled={!selectedProject}
+                      />
+                    </div>
                     {isDirty || isSaving ? (
                       <Button
                         variant="outline"
@@ -6330,26 +6338,79 @@ export function DevHttpClient() {
         document.body,
       )}
 
-      {newMenuAnchor && createPortal(
+
+      {openProjectMenuId && projectMenuAnchor && createPortal(
         <div
-          ref={newMenuPanelRef}
-          style={{ position: "fixed", left: newMenuAnchor.x, top: newMenuAnchor.y, zIndex: 9999 }}
-          className="min-w-36 rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
+          data-project-menu-portal="true"
+          style={{ position: "fixed", top: projectMenuAnchor.top, left: projectMenuAnchor.left }}
+          className="z-50 w-max rounded border border-[var(--bd-str)] bg-[var(--bg-primary)] p-1 shadow-xl"
         >
           <button
             type="button"
-            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-            onClick={() => { setNewMenuAnchor(null); openCreateModal("workspace"); }}
+            className="block w-full whitespace-nowrap rounded px-3 py-2 text-left text-xs text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
+            onClick={() => {
+              const pid = openProjectMenuId;
+              setOpenProjectMenuId(null);
+              setProjectMenuAnchor(null);
+              importTargetProjectIdRef.current = pid;
+              projectMenuFileInputRef.current?.click();
+            }}
           >
-            Workspace
+            Importar
           </button>
           <button
             type="button"
-            className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-            onClick={() => { setNewMenuAnchor(null); openCreateModal("project"); }}
+            className="block w-full whitespace-nowrap rounded px-3 py-2 text-left text-xs text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
+            onClick={async () => {
+              const pid = openProjectMenuId;
+              const pname = bootstrap?.projects.find((p) => p.id === pid)?.name ?? pid;
+              setOpenProjectMenuId(null);
+              setProjectMenuAnchor(null);
+              if (!auth) return;
+              try {
+                const collection = await requestJson<Record<string, unknown>>(
+                  `/projects/${pid}/export/postman`,
+                  { headers: authHeaders(auth.token) },
+                );
+                const blob = new Blob([JSON.stringify(collection, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${pname.toLowerCase().replace(/\s+/g, "-")}.postman_collection.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+                toast.success("Exportação gerada.");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Falha ao exportar coleção.");
+              }
+            }}
           >
-            Projeto
+            Exportar
           </button>
+          {canRenameProjectEntities && (() => {
+            const p = bootstrap?.projects.find((proj) => proj.id === openProjectMenuId);
+            return p ? (
+              <button
+                type="button"
+                className="block w-full whitespace-nowrap rounded px-3 py-2 text-left text-xs text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
+                onClick={() => { setOpenProjectMenuId(null); setProjectMenuAnchor(null); openRenameModal("project", p.id, p.name, p.id); }}
+              >
+                Renomear
+              </button>
+            ) : null;
+          })()}
+          {(() => {
+            const p = bootstrap?.projects.find((proj) => proj.id === openProjectMenuId);
+            return p ? (
+              <button
+                type="button"
+                className="block w-full whitespace-nowrap rounded px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => { setOpenProjectMenuId(null); setProjectMenuAnchor(null); openDeleteProjectModal(p); }}
+              >
+                Deletar
+              </button>
+            ) : null;
+          })()}
         </div>,
         document.body,
       )}

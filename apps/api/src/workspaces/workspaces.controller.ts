@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, Req } from "@nestjs/common";
 
 import { AuthService } from "../auth/auth.service";
 import type { RequestLike } from "../auth/auth-http";
@@ -16,6 +16,21 @@ export class WorkspacesController {
     @Inject(StoreService)
     private readonly store: StoreService,
   ) {}
+
+  @Get()
+  async listWorkspaces(
+    @Req() request: RequestLike,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+  ) {
+    const user = await this.authService.requireUserFromRequest(request);
+    return this.store.listWorkspacesForUserPaginated(user.id, {
+      page: Math.max(1, Number(page) || 1),
+      limit: Math.min(50, Math.max(1, Number(limit) || 20)),
+      search,
+    });
+  }
 
   @Post()
   async createWorkspace(@Body() body: CreateWorkspaceDto, @Req() request: RequestLike) {

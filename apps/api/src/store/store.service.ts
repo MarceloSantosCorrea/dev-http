@@ -202,6 +202,38 @@ export class StoreService {
     }));
   }
 
+  async listWorkspacesForUserPaginated(
+    userId: string,
+    opts: { page: number; limit: number; search?: string },
+  ) {
+    const where: Prisma.MembershipWhereInput = {
+      userId,
+      ...(opts.search
+        ? { workspace: { name: { contains: opts.search, mode: "insensitive" } } }
+        : {}),
+    };
+    const [total, memberships] = await Promise.all([
+      this.prisma.membership.count({ where }),
+      this.prisma.membership.findMany({
+        where,
+        include: { workspace: true },
+        orderBy: { createdAt: "asc" },
+        skip: (opts.page - 1) * opts.limit,
+        take: opts.limit,
+      }),
+    ]);
+    return {
+      data: memberships.map((m) => ({
+        workspace: this.toWorkspace(m.workspace),
+        role: m.role as Membership["role"],
+      })),
+      total,
+      page: opts.page,
+      limit: opts.limit,
+      totalPages: Math.ceil(total / opts.limit),
+    };
+  }
+
   async register(
     input: { name?: string; email: string; password: string },
     originInstanceId?: string,
