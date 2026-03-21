@@ -2490,6 +2490,8 @@ export function DevHttpClient() {
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isProjectMinimized, setIsProjectMinimized] = useState(false);
+  const [collectionsCollapsed, setCollectionsCollapsed] = useState(false);
+  const [environmentsCollapsed, setEnvironmentsCollapsed] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [createModalType, setCreateModalType] = useState<CreateModalType>(null);
   const [createName, setCreateName] = useState("");
@@ -5605,22 +5607,33 @@ export function DevHttpClient() {
                   {isActiveProject && !isProjectMinimized ? (
                     <div className="border-t border-[var(--bd-def)] px-3 py-2 grid gap-3">
                       <div className="grid gap-0.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
-                            Colecoes
-                          </span>
+                        <div
+                          className="flex items-center justify-between gap-2 cursor-pointer"
+                          onClick={() => setCollectionsCollapsed((v) => !v)}
+                        >
+                          <div className="flex items-center gap-1">
+                            <ChevronDown
+                              className={cn(
+                                "h-3 w-3 transition-transform text-muted-foreground",
+                                collectionsCollapsed && "-rotate-90",
+                              )}
+                            />
+                            <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
+                              Colecoes
+                            </span>
+                          </div>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7"
-                            onClick={() => openCreateModal("collection")}
+                            onClick={(e) => { e.stopPropagation(); openCreateModal("collection"); }}
                             title="Nova colecao"
                           >
                             +
                           </Button>
                         </div>
 
-                        {project.collections.length > 0 ? (
+                        {!collectionsCollapsed && (project.collections.length > 0 ? (
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleCollectionDragEnd(project.id, event)}
@@ -5674,26 +5687,37 @@ export function DevHttpClient() {
                           <p className="text-xs text-muted-foreground px-1">
                             Nenhuma colecao criada.
                           </p>
-                        )}
+                        ))}
                       </div>
 
                       <div className="grid gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
-                            Ambientes
-                          </span>
+                        <div
+                          className="flex items-center justify-between gap-2 cursor-pointer"
+                          onClick={() => setEnvironmentsCollapsed((v) => !v)}
+                        >
+                          <div className="flex items-center gap-1">
+                            <ChevronDown
+                              className={cn(
+                                "h-3 w-3 transition-transform text-muted-foreground",
+                                environmentsCollapsed && "-rotate-90",
+                              )}
+                            />
+                            <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
+                              Ambientes
+                            </span>
+                          </div>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7"
-                            onClick={() => openCreateModal("environment")}
+                            onClick={(e) => { e.stopPropagation(); openCreateModal("environment"); }}
                             title="Novo ambiente"
                           >
                             +
                           </Button>
                         </div>
 
-                        {project.environments.length > 0 ? (
+                        {!environmentsCollapsed && (project.environments.length > 0 ? (
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleEnvironmentDragEnd(project.id, event)}
@@ -5717,7 +5741,7 @@ export function DevHttpClient() {
                           <p className="text-xs text-muted-foreground px-1">
                             Nenhum ambiente criado.
                           </p>
-                        )}
+                        ))}
                       </div>
                     </div>
                   ) : null}
@@ -5741,7 +5765,7 @@ export function DevHttpClient() {
           )}
         </aside>
 
-        <section className="p-3 flex flex-col gap-2 min-h-0 overflow-hidden">
+        <section className="px-3 flex flex-col gap-2 min-h-0 overflow-hidden">
           {openTabs.length > 0 && (
             <DndContext collisionDetection={closestCenter} onDragEnd={handleTabDragEnd} modifiers={[restrictToHorizontalAxis]}>
               <SortableContext
@@ -6542,6 +6566,7 @@ function KeyValueEditor({
               environmentName={environmentName}
               onUpdateVariable={onUpdateVariable}
               placeholder="Chave"
+              className="border-0 rounded-none shadow-none focus-visible:ring-0"
             />
           </div>
           <div className="border-r border-border/60">
@@ -6552,6 +6577,7 @@ function KeyValueEditor({
               environmentName={environmentName}
               onUpdateVariable={onUpdateVariable}
               placeholder="Valor"
+              className="border-0 rounded-none shadow-none focus-visible:ring-0"
             />
           </div>
           <div className="flex items-center justify-center">
@@ -7668,6 +7694,7 @@ function HeadersTable({
                 environmentName={environmentName}
                 onUpdateVariable={onUpdateVariable}
                 placeholder="Chave"
+                className="border-0 rounded-none shadow-none focus-visible:ring-0"
               />
             </div>
             <div className="border-r border-border/60">
@@ -7678,6 +7705,7 @@ function HeadersTable({
                 environmentName={environmentName}
                 onUpdateVariable={onUpdateVariable}
                 placeholder="Valor"
+                className="border-0 rounded-none shadow-none focus-visible:ring-0"
               />
             </div>
             <div className="flex items-center justify-center">
