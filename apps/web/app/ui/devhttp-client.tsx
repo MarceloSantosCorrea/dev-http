@@ -2488,10 +2488,12 @@ export function DevHttpClient() {
   const [activeTab, setActiveTab] = useState<"headers" | "queryParams" | "body" | "script">(
     "headers",
   );
+  const [showAutoHeadersByTab, setShowAutoHeadersByTab] = useState<Record<string, boolean>>({});
+  const [saveRequestModalTabId, setSaveRequestModalTabId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarExpandedProjectId, setSidebarExpandedProjectId] = useState("");
-  const [collectionsCollapsed, setCollectionsCollapsed] = useState(false);
-  const [environmentsCollapsed, setEnvironmentsCollapsed] = useState(false);
+  const [sidebarExpandedProjectIds, setSidebarExpandedProjectIds] = useState<Set<string>>(new Set());
+  const [collectionsCollapsedByProject, setCollectionsCollapsedByProject] = useState<Record<string, boolean>>({});
+  const [environmentsCollapsedByProject, setEnvironmentsCollapsedByProject] = useState<Record<string, boolean>>({});
   const [projectSearch, setProjectSearch] = useState("");
   const [createModalType, setCreateModalType] = useState<CreateModalType>(null);
   const [createName, setCreateName] = useState("");
@@ -2978,7 +2980,7 @@ export function DevHttpClient() {
 
         skipNextProjectResetRef.current = true;
         setSelectedProjectId(nextUiState.selectedProjectId);
-        setSidebarExpandedProjectId(nextUiState.selectedProjectId);
+        setSidebarExpandedProjectIds(new Set([nextUiState.selectedProjectId]));
         setSelectedCollectionId(nextUiState.selectedCollectionId);
         setSelectedEnvironmentId(nextUiState.selectedEnvironmentId);
         setExpandedCollectionIds(nextUiState.expandedCollectionIds);
@@ -3399,7 +3401,7 @@ export function DevHttpClient() {
   }, [activeTabId, openTabs, selectedCollectionId, selectedProjectId, auth]);
 
   async function saveRequestTab(tabId: string) {
-    if (!auth || !selectedProject) {
+    if (!auth) {
       return null;
     }
 
@@ -3407,6 +3409,16 @@ export function DevHttpClient() {
       (tab): tab is RequestEditorTab => tab.tabId === tabId && tab.type === "request",
     );
     if (!currentTab) {
+      return null;
+    }
+
+    // Request sem projeto → abrir modal de destino
+    if (!currentTab.draft.projectId) {
+      setSaveRequestModalTabId(tabId);
+      return null;
+    }
+
+    if (!selectedProject) {
       return null;
     }
 
@@ -3495,6 +3507,79 @@ export function DevHttpClient() {
 
   async function handleSaveRequest() {
     await saveRequestTab(activeTabId);
+  }
+
+  async function handleSaveRequestModalConfirm(
+    tabId: string,
+    name: string,
+    projectId: string,
+    collectionId: string,
+  ) {
+    if (!auth) return;
+    setSaveRequestModalTabId(null);
+
+    const currentTab = openTabs.find(
+      (t): t is RequestEditorTab => t.tabId === tabId && t.type === "request",
+    );
+    if (!currentTab) return;
+
+    const payload = {
+      ...currentTab.draft,
+      name,
+      projectId,
+      collectionId,
+      headers: meaningfulKeyValues(currentTab.draft.headers),
+      queryParams: meaningfulKeyValues(currentTab.draft.queryParams),
+      formData: meaningfulFormData(currentTab.draft.formData),
+    };
+
+    try {
+      const saved = await requestJson<BootstrapRequest>(`/projects/${projectId}/requests`, {
+        method: "POST",
+        headers: authHeaders(auth.token),
+        body: JSON.stringify(payload),
+      });
+
+      const savedDraft = saved.collectionId ? saved : { ...saved, collectionId };
+      const savedSnapshot = serializeRequestSnapshot(savedDraft);
+
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((p) =>
+                p.id === projectId
+                  ? { ...p, requests: upsertById(p.requests, savedDraft) }
+                  : p,
+              ),
+            }
+          : current,
+      );
+      setOpenTabs((prev) =>
+        prev.map((tab) =>
+          tab.tabId === tabId && tab.type === "request"
+            ? {
+                ...tab,
+                tabId: saved.id,
+                draft: savedDraft,
+                savedSnapshot,
+                isDirty: false,
+                isSaving: false,
+                hasRemoteConflict: false,
+                remoteConflictAt: undefined,
+                remoteConflictReason: undefined,
+              }
+            : tab,
+        ),
+      );
+      if (activeTabId === tabId) setActiveTabId(saved.id);
+      setSelectedProjectId(projectId);
+      setSelectedCollectionId(collectionId);
+      setExpandedCollectionIds((c) => (c.includes(collectionId) ? c : [...c, collectionId]));
+      toast.success("Request salva.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar request.");
+    }
   }
 
   function buildExecutionPayload(): ExecutedRequest {
@@ -4947,17 +5032,27 @@ export function DevHttpClient() {
     }));
   }
 
-  function handleCreateNewRequest(collectionId?: string) {
-    if (!selectedProject) return;
-    const targetCollectionId = collectionId ?? selectedCollectionId ?? selectedProject.collections[0]?.id;
+  function handleCreateUnassignedRequest() {
+    const tabId = generateId();
+    const draft = defaultRequest();
+    setOpenTabs((prev) => [...prev, createRequestEditorTab(draft, { tabId })]);
+    setActiveTabId(tabId);
+  }
+
+  function handleCreateNewRequest(collectionId?: string, projectId?: string) {
+    const targetProjectId = projectId ?? selectedProjectId;
+    const targetProject = bootstrap?.projects.find((p) => p.id === targetProjectId);
+    if (!targetProject) return;
+    const targetCollectionId = collectionId ?? selectedCollectionId ?? targetProject.collections[0]?.id;
     if (!targetCollectionId) {
       toast("Crie uma coleção antes de adicionar uma request.");
       return;
     }
     const tabId = generateId();
-    const draft = defaultRequest(selectedProject.id, targetCollectionId);
+    const draft = defaultRequest(targetProject.id, targetCollectionId);
     setOpenTabs((prev) => [...prev, createRequestEditorTab(draft, { tabId })]);
     setActiveTabId(tabId);
+    setSelectedProjectId(targetProjectId);
     setSelectedCollectionId(targetCollectionId);
     setExpandedCollectionIds((current) =>
       current.includes(targetCollectionId) ? current : [...current, targetCollectionId],
@@ -4995,7 +5090,7 @@ export function DevHttpClient() {
       );
     }
     if (request.projectId) {
-      setSidebarExpandedProjectId(request.projectId);
+      setSidebarExpandedProjectIds((prev) => new Set([...prev, request.projectId]));
     }
     setCollectionMenu(null);
   }
@@ -5004,7 +5099,7 @@ export function DevHttpClient() {
     const ownerProject = bootstrap?.projects.find((p) =>
       p.environments.some((e) => e.id === environmentId),
     );
-    if (ownerProject) setSidebarExpandedProjectId(ownerProject.id);
+    if (ownerProject) setSidebarExpandedProjectIds((prev) => new Set([...prev, ownerProject.id]));
     const tabId = `env-${environmentId}`;
     setOpenTabs((prev) => {
       if (prev.some((t) => t.tabId === tabId)) return prev;
@@ -5620,7 +5715,15 @@ export function DevHttpClient() {
             />
             <div className="grid gap-2">
             {filteredProjects.map((project) => {
-              const isActiveProject = project.id === selectedProjectId;
+              const activeTabProjectId =
+                activeEditorTab?.type === "request"
+                  ? activeEditorTab.draft.projectId ?? null
+                  : activeEditorTab?.type === "environment"
+                    ? bootstrap?.projects.find((p) =>
+                        p.environments.some((e) => e.id === (activeEditorTab as EnvironmentEditorTab).environmentId),
+                      )?.id ?? null
+                    : null;
+              const isActiveProject = openTabs.length > 0 && project.id === activeTabProjectId;
 
               return (
                 <section
@@ -5634,9 +5737,15 @@ export function DevHttpClient() {
                     <button
                       type="button"
                       onClick={() => {
-                        setSidebarExpandedProjectId((prev) =>
-                          prev === project.id ? "" : project.id,
-                        );
+                        setSidebarExpandedProjectIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(project.id)) {
+                            next.delete(project.id);
+                          } else {
+                            next.add(project.id);
+                          }
+                          return next;
+                        });
                       }}
                       className="flex-1 text-left min-w-0"
                     >
@@ -5645,7 +5754,7 @@ export function DevHttpClient() {
                         <ChevronDown
                           className={cn(
                             "h-3.5 w-3.5 transition-transform shrink-0 text-muted-foreground",
-                            sidebarExpandedProjectId !== project.id && "-rotate-90",
+                            !sidebarExpandedProjectIds.has(project.id) && "-rotate-90",
                           )}
                         />
                       </div>
@@ -5674,18 +5783,23 @@ export function DevHttpClient() {
                     </button>
                   </div>
 
-                  {sidebarExpandedProjectId === project.id ? (
+                  {sidebarExpandedProjectIds.has(project.id) ? (
                     <div className="border-t border-[var(--bd-def)] px-3 py-2 grid gap-3">
                       <div className="grid gap-0.5">
                         <div
                           className="flex items-center justify-between gap-2 cursor-pointer"
-                          onClick={() => setCollectionsCollapsed((v) => !v)}
+                          onClick={() =>
+                            setCollectionsCollapsedByProject((prev) => ({
+                              ...prev,
+                              [project.id]: !prev[project.id],
+                            }))
+                          }
                         >
                           <div className="flex items-center gap-1">
                             <ChevronDown
                               className={cn(
                                 "h-3 w-3 transition-transform text-muted-foreground",
-                                collectionsCollapsed && "-rotate-90",
+                                collectionsCollapsedByProject[project.id] && "-rotate-90",
                               )}
                             />
                             <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
@@ -5703,7 +5817,7 @@ export function DevHttpClient() {
                           </Button>
                         </div>
 
-                        {!collectionsCollapsed && (project.collections.length > 0 ? (
+                        {!collectionsCollapsedByProject[project.id] && (project.collections.length > 0 ? (
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleCollectionDragEnd(project.id, event)}
@@ -5763,13 +5877,18 @@ export function DevHttpClient() {
                       <div className="grid gap-2">
                         <div
                           className="flex items-center justify-between gap-2 cursor-pointer"
-                          onClick={() => setEnvironmentsCollapsed((v) => !v)}
+                          onClick={() =>
+                            setEnvironmentsCollapsedByProject((prev) => ({
+                              ...prev,
+                              [project.id]: !prev[project.id],
+                            }))
+                          }
                         >
                           <div className="flex items-center gap-1">
                             <ChevronDown
                               className={cn(
                                 "h-3 w-3 transition-transform text-muted-foreground",
-                                environmentsCollapsed && "-rotate-90",
+                                environmentsCollapsedByProject[project.id] && "-rotate-90",
                               )}
                             />
                             <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground font-semibold">
@@ -5787,7 +5906,7 @@ export function DevHttpClient() {
                           </Button>
                         </div>
 
-                        {!environmentsCollapsed && (project.environments.length > 0 ? (
+                        {!environmentsCollapsedByProject[project.id] && (project.environments.length > 0 ? (
                           <DndContext
                             collisionDetection={closestCenter}
                             onDragEnd={(event) => void handleEnvironmentDragEnd(project.id, event)}
@@ -5879,7 +5998,7 @@ export function DevHttpClient() {
                 {selectedProject ? (
                   <>
                     <p className="text-muted-foreground text-sm">Nenhuma request aberta</p>
-                    <Button onClick={() => handleCreateNewRequest()}>
+                    <Button onClick={handleCreateUnassignedRequest}>
                       + Nova request
                     </Button>
                   </>
@@ -5927,7 +6046,11 @@ export function DevHttpClient() {
               <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-hidden lg:h-full pt-3">
                   {activeEditorTab?.type === "request" && (
                     <div className="flex items-center gap-1.5 text-sm text-muted-foreground shrink-0 px-px">
-                      <span className="truncate max-w-[140px]">{selectedProject?.name ?? "Projeto"}</span>
+                      <span className="truncate max-w-[140px]">
+                        {activeEditorTab.draft.projectId
+                          ? (bootstrap?.projects.find((p) => p.id === activeEditorTab.draft.projectId)?.name ?? "Projeto")
+                          : "Sem projeto"}
+                      </span>
                       <span className="opacity-40">/</span>
                       {isEditingRequestName ? (
                         <input
@@ -6060,6 +6183,10 @@ export function DevHttpClient() {
                               v.key === name ? { ...v, value: val } : v,
                             ),
                           }))
+                        }
+                        showAutoHeaders={showAutoHeadersByTab[activeTabId] ?? false}
+                        onToggleShowAutoHeaders={(v) =>
+                          setShowAutoHeadersByTab((prev) => ({ ...prev, [activeTabId]: v }))
                         }
                       />
                     </TabsContent>
@@ -6390,6 +6517,22 @@ export function DevHttpClient() {
         onSave={() => void handleSaveAndCloseTab()}
       />
 
+      {saveRequestModalTabId && (() => {
+        const tab = openTabs.find(
+          (t): t is RequestEditorTab => t.tabId === saveRequestModalTabId && t.type === "request",
+        );
+        return tab ? (
+          <SaveRequestModal
+            tab={tab}
+            projects={bootstrap?.projects ?? []}
+            onSave={(name, projectId, collectionId) =>
+              void handleSaveRequestModalConfirm(saveRequestModalTabId, name, projectId, collectionId)
+            }
+            onClose={() => setSaveRequestModalTabId(null)}
+          />
+        ) : null;
+      })()}
+
       <SettingsModal
         open={isSettingsOpen}
         tab={settingsTab}
@@ -6615,7 +6758,7 @@ export function DevHttpClient() {
           <button
             type="button"
             className="w-full rounded px-3 py-2 text-left text-sm text-[var(--text-pri)] hover:bg-[var(--bg-secondary)]"
-            onClick={() => { setCollectionMenu(null); handleCreateNewRequest(collectionMenu.id); }}
+            onClick={() => { setCollectionMenu(null); handleCreateNewRequest(collectionMenu.id, collectionMenu.projectId); }}
           >
             Nova request
           </button>
@@ -7131,6 +7274,170 @@ function UnsavedRequestModal({
           <Button onClick={onSave} disabled={isSaving}>
             {isSaving ? "Salvando..." : "Salvar"}
           </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function SaveRequestModal({
+  tab,
+  projects,
+  onSave,
+  onClose,
+}: {
+  tab: RequestEditorTab;
+  projects: BootstrapProject[];
+  onSave: (name: string, projectId: string, collectionId: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(tab.draft.name || "Nova request");
+  const [search, setSearch] = useState("");
+  const [navProjectId, setNavProjectId] = useState<string | null>(null);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+
+  const navProject = projects.find((p) => p.id === navProjectId) ?? null;
+
+  const breadcrumb = navProject
+    ? selectedCollectionId
+      ? `${navProject.name} / ${navProject.collections.find((c) => c.id === selectedCollectionId)?.name ?? ""}`
+      : navProject.name
+    : null;
+
+  const filteredItems = navProject
+    ? navProject.collections.filter((c) =>
+        c.name.toLowerCase().includes(search.toLowerCase()),
+      )
+    : projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+
+  const canSave = !!navProjectId && !!selectedCollectionId;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Salvar Request
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Label>Nome</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nome da request"
+              autoFocus
+            />
+          </div>
+
+          <div className="grid gap-1.5">
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+              <span>Salvar em</span>
+              {breadcrumb && (
+                <>
+                  <span className="opacity-40">/</span>
+                  <button
+                    type="button"
+                    className="text-foreground hover:underline"
+                    onClick={() => {
+                      if (selectedCollectionId) {
+                        setSelectedCollectionId(null);
+                        setSearch("");
+                      } else {
+                        setNavProjectId(null);
+                        setSelectedCollectionId(null);
+                        setSearch("");
+                      }
+                    }}
+                  >
+                    {breadcrumb}
+                  </button>
+                </>
+              )}
+            </div>
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={navProject ? "Pesquisar coleção..." : "Pesquisar projeto..."}
+            />
+            <div className="max-h-48 overflow-y-auto rounded border border-[var(--bd-def)] divide-y divide-[var(--bd-def)]">
+              {filteredItems.length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground">Nenhum item encontrado.</p>
+              ) : navProject ? (
+                navProject.collections.filter((c) =>
+                  c.name.toLowerCase().includes(search.toLowerCase()),
+                ).map((collection) => (
+                  <button
+                    key={collection.id}
+                    type="button"
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--bg-secondary)]",
+                      selectedCollectionId === collection.id && "bg-[var(--bg-tertiary)] text-[var(--brand)]",
+                    )}
+                    onClick={() => setSelectedCollectionId(collection.id)}
+                  >
+                    <svg className="h-4 w-4 shrink-0 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                    </svg>
+                    {collection.name}
+                  </button>
+                ))
+              ) : (
+                projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())).map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--bg-secondary)]"
+                    onClick={() => {
+                      setNavProjectId(project.id);
+                      setSelectedCollectionId(null);
+                      setSearch("");
+                    }}
+                  >
+                    <svg className="h-4 w-4 shrink-0 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                    </svg>
+                    {project.name}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              {navProject && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setNavProjectId(null);
+                    setSelectedCollectionId(null);
+                    setSearch("");
+                  }}
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
+                  Voltar
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={!canSave}
+                onClick={() => {
+                  if (canSave) onSave(name, navProjectId!, selectedCollectionId!);
+                }}
+              >
+                Salvar
+              </Button>
+              <Button variant="ghost" onClick={onClose}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -7725,6 +8032,8 @@ function HeadersTable({
   variables = [],
   onUpdateVariable,
   environmentName,
+  showAutoHeaders,
+  onToggleShowAutoHeaders,
 }: {
   autoItems: AutoHeaderPreview[];
   rows: KeyValue[];
@@ -7735,8 +8044,9 @@ function HeadersTable({
   variables?: Variable[];
   onUpdateVariable?: (name: string, value: string) => void;
   environmentName?: string;
+  showAutoHeaders: boolean;
+  onToggleShowAutoHeaders: (value: boolean) => void;
 }) {
-  const [showAutoHeaders, setShowAutoHeaders] = useState(true);
 
   return (
     <div>
@@ -7749,7 +8059,7 @@ function HeadersTable({
           {autoItems.length > 0 && (
             <button
               type="button"
-              onClick={() => setShowAutoHeaders((v) => !v)}
+              onClick={() => onToggleShowAutoHeaders(!showAutoHeaders)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               {showAutoHeaders ? "Hide auto-generated headers" : "Show auto-generated headers"}
