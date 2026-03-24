@@ -175,17 +175,6 @@ export interface ExecutionResponse {
   scriptResult?: RequestScriptResult;
 }
 
-export interface ProjectBundle {
-  project: Project;
-  requests: RequestDefinition[];
-  environments: Environment[];
-}
-
-export interface LoginPayload {
-  email: string;
-  password: string;
-}
-
 export interface RegisterPayload {
   name: string;
   email: string;

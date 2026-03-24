@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 
 import { AppModule } from "./app.module";
 import { getClientInstanceId } from "./auth/auth-http";
-import { getAllowedOrigins, isOriginAllowed, parseConfiguredOrigins } from "./http-config";
+import { isOriginAllowed, parseConfiguredOrigins } from "./http-config";
 import { runWithRequestContext } from "./request-context";
 
 config({ path: resolve(process.cwd(), ".env") });

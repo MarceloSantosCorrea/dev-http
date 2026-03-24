@@ -143,12 +143,6 @@ async function executeLocalAgentRequestOnce(
   return (await response.json()) as ExecutionResponse;
 }
 
-export async function executeLocalAgentRequest(
-  token: string,
-  payload: LocalExecutionRequest,
-): Promise<ExecutionResponse> {
-  return executeLocalAgentRequestOnce(token, payload);
-}
 
 export async function executeLocalAgentRequestWithRetry(
   token: string,

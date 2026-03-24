@@ -53,10 +53,6 @@ export class SaveRequestDto {
   @IsString()
   name!: string;
 
-  @IsOptional()
-  @IsString()
-  description?: string;
-
   @IsIn(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
   method!: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 

@@ -19,15 +19,3 @@ export function isOriginAllowed(origin: string, configured: string[]): boolean {
   return LOCAL_NETWORK_PATTERN.test(origin);
 }
 
-export function getAllowedOrigins() {
-  const configured = parseConfiguredOrigins();
-  if (configured.length > 0) {
-    return configured;
-  }
-
-  return ["http://localhost:3000", "http://127.0.0.1:3000"];
-}
-
-export function getSocketIoPath() {
-  return "/api/socket.io";
-}

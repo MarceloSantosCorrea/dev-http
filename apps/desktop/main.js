@@ -413,7 +413,6 @@ ipcMain.handle("devhttp:window-maximize", () => {
   else mainWindow?.maximize();
 });
 ipcMain.handle("devhttp:window-close", () => mainWindow?.close());
-ipcMain.handle("devhttp:get-platform", () => process.platform);
 ipcMain.handle("devhttp:app-version", () => app.getVersion());
 ipcMain.handle("devhttp:window-begin-titlebar-drag", (_event, payload) => {
   return beginTitleBarDrag(payload);
